@@ -303,6 +303,8 @@ pub(crate) fn parse_key(input: &str) -> Option<Key> {
         "/" | "slash" => Some(Key::Other(0x2c)),
         "-" | "minus" => Some(Key::Other(0x1b)),
         "=" | "equal" => Some(Key::Other(0x18)),
+        "[" | "bracket_left" | "left_bracket" => Some(Key::Other(0x21)),
+        "]" | "bracket_right" | "right_bracket" => Some(Key::Other(0x1e)),
 
         "f1" => Some(Key::F1),
         "f2" => Some(Key::F2),

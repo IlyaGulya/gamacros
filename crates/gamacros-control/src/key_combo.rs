@@ -65,7 +65,11 @@ impl<'de> Deserialize<'de> for KeyCombo {
                             }
                         },
                         None => {
-                            return Err(E::custom(format!("Invalid key: {part}")));
+                            return Err(E::custom(format!(
+                                "Invalid key '{part}' in combo '{v}'. \
+                                 Use named keys (e.g. bracket_left, bracket_right, slash, comma) \
+                                 or single lowercase letters (a-z)."
+                            )));
                         }
                     }
                 }
