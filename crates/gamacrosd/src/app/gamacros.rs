@@ -278,16 +278,25 @@ impl Gamacros {
             return;
         };
         let app_rules = match workspace.rules.get(active_app) {
-            Some(r) => r,
+            Some(r) => {
+                print_debug!("using app-specific rules for {active_app}");
+                r
+            }
             None => match workspace.rules.get("common") {
-                Some(r) => r,
-                None => return,
+                Some(r) => {
+                    print_debug!("using common rules (no rules for {active_app})");
+                    r
+                }
+                None => {
+                    print_debug!("no rules found for {active_app} and no common rules");
+                    return;
+                }
             },
         };
-        let state = self
-            .controllers
-            .get_mut(&id)
-            .expect("device must be added before use");
+        let Some(state) = self.controllers.get_mut(&id) else {
+            print_debug!("ignoring button for unknown controller {id}");
+            return;
+        };
         let button = state.mapping.mapping.get(&button).unwrap_or(&button);
 
         // snapshot before change
@@ -319,8 +328,10 @@ impl Gamacros {
             }
         }
         if max_bits == 0 {
+            print_debug!("no matching rule for pressed={now_pressed:?} (button_rules={})", app_rules.buttons.len());
             return;
         }
+        print_debug!("firing rule with max_bits={max_bits}");
 
         // Second pass: execute only rules with that cardinality
         for (target, rule) in app_rules.buttons.iter() {

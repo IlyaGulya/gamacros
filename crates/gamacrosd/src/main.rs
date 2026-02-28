@@ -4,6 +4,8 @@ mod cli;
 mod runner;
 mod api;
 mod activity;
+#[cfg(target_os = "macos")]
+mod accessibility;
 
 use std::path::PathBuf;
 use std::{process, time::Duration};
@@ -168,6 +170,12 @@ fn resolve_workspace_path(workspace: Option<&str>) -> PathBuf {
 }
 
 fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
+    #[cfg(target_os = "macos")]
+    {
+        let trusted = accessibility::ensure_accessibility(true);
+        print_info!("accessibility trusted: {trusted}");
+    }
+
     // Activity monitor must run on the main thread.
     // We keep its std::mpsc receiver and poll it from the event loop (no bridge thread).
     let Some((monitor, activity_std_rx, monitor_stop_tx)) = Monitor::new() else {
