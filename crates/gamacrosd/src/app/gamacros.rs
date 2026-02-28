@@ -81,7 +81,7 @@ impl Gamacros {
         // Recompute stick rules for current active app (workspace may have changed)
         if !self.active_app.is_empty() {
             if let Some(ws) = self.workspace.as_ref() {
-                if let Some(app_rules) = ws.rules.get(&*self.active_app) {
+                if let Some(app_rules) = ws.rules.get(&*self.active_app).or_else(|| ws.rules.get("common")) {
                     self.active_stick_rules =
                         Some(Arc::new(app_rules.sticks.clone()));
                     self.compiled_stick_rules = self
@@ -152,6 +152,7 @@ impl Gamacros {
         self.active_stick_rules = workspace
             .rules
             .get(&*self.active_app)
+            .or_else(|| workspace.rules.get("common"))
             .map(|r| Arc::new(r.sticks.clone()));
 
         self.compiled_stick_rules = self
@@ -276,8 +277,12 @@ impl Gamacros {
         let Some(workspace) = self.workspace.as_ref() else {
             return;
         };
-        let Some(app_rules) = workspace.rules.get(active_app) else {
-            return;
+        let app_rules = match workspace.rules.get(active_app) {
+            Some(r) => r,
+            None => match workspace.rules.get("common") {
+                Some(r) => r,
+                None => return,
+            },
         };
         let state = self
             .controllers
