@@ -12,5 +12,9 @@ license = { workspace = true }
 
 [dependencies]
 enigo = { workspace = true, features = ["serde", "platform_specific"] }
+log = "0.4"
 serde = { workspace = true, features = ["derive"] }
 smallvec = "1.13"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+core-graphics = { version = "0.25", features = ["highsierra"] }

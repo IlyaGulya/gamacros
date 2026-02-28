@@ -96,6 +96,7 @@ pub fn setup(verbose: bool, no_color: bool) {
     Dispatch::new()
         .level(log::LevelFilter::Error) // Hide enigo logs
         .level_for("gamacrosd", log_level)
+        .level_for("gamacros_control", log_level)
         .chain(std::io::stdout())
         .apply()
         .expect("Unable to set up logger");

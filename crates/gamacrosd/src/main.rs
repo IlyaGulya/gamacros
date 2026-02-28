@@ -7,6 +7,7 @@ mod activity;
 #[cfg(target_os = "macos")]
 mod accessibility;
 
+use std::fs::File;
 use std::path::PathBuf;
 use std::{process, time::Duration};
 
@@ -156,6 +157,10 @@ fn main() -> process::ExitCode {
 fn resolve_workspace_path(workspace: Option<&str>) -> PathBuf {
     let workspace = workspace.map(PathBuf::from);
     if let Some(workspace) = workspace {
+        // If the user passed a file path (e.g. gc_profile.yaml), use its parent directory
+        if workspace.is_file() {
+            return workspace.parent().unwrap_or(&workspace).to_owned();
+        }
         return workspace;
     }
 
@@ -170,6 +175,30 @@ fn resolve_workspace_path(workspace: Option<&str>) -> PathBuf {
 }
 
 fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
+    // Ensure only one instance runs per workspace by holding an exclusive flock.
+    if let Some(ws) = maybe_workspace_path.as_ref() {
+        let lock_path = ws.parent().unwrap_or(ws).join("gamacrosd.lock");
+        let file = File::create(&lock_path).unwrap_or_else(|e| {
+            print_error!("failed to create lock file {}: {e}", lock_path.display());
+            process::exit(1);
+        });
+        let mut lock = fd_lock::RwLock::new(file);
+        match lock.try_write() {
+            Ok(guard) => {
+                // Forget the guard so Drop doesn't unlock.
+                // The fd stays open via `lock` (kept alive below), so the OS lock persists
+                // until the process exits.
+                std::mem::forget(guard);
+            }
+            Err(_) => {
+                print_error!("another gamacrosd is already running (lock: {})", lock_path.display());
+                process::exit(1);
+            }
+        }
+        // Leak the RwLock to keep the fd open for the process lifetime.
+        std::mem::forget(lock);
+    }
+
     #[cfg(target_os = "macos")]
     {
         let trusted = accessibility::ensure_accessibility(true);
@@ -201,10 +230,15 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
 
     // Start control socket on the main thread and forward commands into the event loop.
     let (api_tx, api_rx) = unbounded::<ApiCommand>();
-    let _control_handle = workspace_path.clone().map(|workspace_path| {
-        UnixSocket::new(workspace_path)
-            .listen_events(api_tx)
-            .expect("failed to start api server")
+    let _control_handle = workspace_path.clone().and_then(|ws_path| {
+        let sock_dir = ws_path.parent().unwrap_or(&ws_path).to_owned();
+        match UnixSocket::new(sock_dir).listen_events(api_tx) {
+            Ok(h) => Some(h),
+            Err(e) => {
+                print_error!("failed to start api server: {e}");
+                None
+            }
+        }
     });
 
     // Run the main event loop in a background thread while the main thread runs the monitor loop.
@@ -272,11 +306,13 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                             gamacros.on_button_with(id, button, ButtonPhase::Pressed, |action| {
                                 action_runner.run(action);
                             });
+                            need_reschedule_wake = true;
                         }
                         Ok(ControllerEvent::ButtonReleased { id, button }) => {
                             gamacros.on_button_with(id, button, ButtonPhase::Released, |action| {
                                 action_runner.run(action);
                             });
+                            need_reschedule_wake = true;
                         }
                         Ok(ControllerEvent::AxisMotion { id, axis, value }) => {
                             gamacros.on_axis_motion(id, axis, value);
@@ -325,8 +361,10 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                             }
                         }
                     }
-                    // Run repeats due (may be multiple)
+                    // Run stick repeats due (may be multiple)
                     gamacros.process_due_repeats(now, |action| { action_runner.run(action); });
+                    // Run button repeats due
+                    gamacros.process_button_repeats(now, &mut |action| { action_runner.run(action); });
                     need_reschedule_wake = true;
                 }
             }
@@ -378,16 +416,19 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                     next_tick_due = None;
                     ticking_enabled = false;
                 }
-                // Recompute next repeat due
+                // Recompute next repeat due (sticks + buttons)
                 let repeat_due = gamacros.next_repeat_due();
+                let button_repeat_due = gamacros.next_button_repeat_due();
 
                 // Arm single wake for the earliest deadline
-                let next_due = match (next_tick_due, repeat_due) {
-                    (Some(a), Some(b)) => Some(core::cmp::min(a, b)),
-                    (Some(a), None) => Some(a),
-                    (None, Some(b)) => Some(b),
-                    (None, None) => None,
-                };
+                let mut next_due = next_tick_due;
+                for candidate in [repeat_due, button_repeat_due] {
+                    next_due = match (next_due, candidate) {
+                        (Some(a), Some(b)) => Some(core::cmp::min(a, b)),
+                        (Some(a), None) => Some(a),
+                        (None, b) => b,
+                    };
+                }
                 if let Some(due) = next_due {
                     let dur = if due > now { due - now } else { Duration::ZERO };
                     wake_rx = crossbeam_channel::after(dur);

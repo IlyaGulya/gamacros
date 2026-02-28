@@ -81,13 +81,50 @@ pub enum MouseClickType {
     DoubleClick,
 }
 
+/// A raw modifier key identifier (macOS virtual keycode).
+/// Used for sending FlagsChanged events that apps like Freeflow/SuperWhisper expect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RawModifierKey {
+    Control,
+    RControl,
+    Shift,
+    RShift,
+    Command,
+    RCommand,
+    Option,
+    ROption,
+}
+
+impl RawModifierKey {
+    /// Return the macOS virtual keycode for this modifier.
+    #[cfg(target_os = "macos")]
+    pub fn keycode(self) -> u16 {
+        match self {
+            Self::Control => 0x3B,
+            Self::RControl => 0x3E,
+            Self::Shift => 0x38,
+            Self::RShift => 0x3C,
+            Self::Command => 0x37,
+            Self::RCommand => 0x36,
+            Self::Option => 0x3A,
+            Self::ROption => 0x3D,
+        }
+    }
+}
+
 /// A action for a gamepad button.
 #[derive(Debug, Clone)]
 pub enum ButtonAction {
+    /// Hold: press on button down, release on button up. Default for `keystroke:`.
     Keystroke(Arc<KeyCombo>),
+    /// Tap: press+release immediately on button press. No key repeat. Use `tap:`.
+    TapKeystroke(Arc<KeyCombo>),
     Macros(Arc<Macros>),
     Shell(String),
     MouseClick { button: MouseButton, click_type: MouseClickType },
+    /// Send a raw modifier key as a FlagsChanged CGEvent (macOS).
+    /// This is needed for apps that listen for modifier-only keypresses.
+    RawModifier(RawModifierKey),
 }
 
 /// A rule for a gamepad button.
@@ -95,6 +132,8 @@ pub enum ButtonAction {
 pub struct ButtonRule {
     pub action: ButtonAction,
     pub vibrate: Option<u16>,
+    pub repeat_delay_ms: Option<u64>,
+    pub repeat_interval_ms: Option<u64>,
 }
 
 /// A side of a stick.

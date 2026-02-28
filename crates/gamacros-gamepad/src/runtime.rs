@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::thread;
 
 use crossbeam_channel::Receiver;
-use ahash::AHashMap;
+use ahash::{AHashMap, AHashSet};
 use sdl2::controller::{Button as SdlButton, GameController, Axis as SdlAxis};
 use sdl2::event::Event;
 use sdl2::haptic::Haptic;
@@ -49,6 +49,8 @@ pub(crate) fn start_runtime_thread(
         let mut joysticks: AHashMap<ControllerId, Joystick> = AHashMap::new();
         let mut haptics: AHashMap<ControllerId, Haptic> = AHashMap::new();
         let mut trigger_state: AHashMap<ControllerId, (bool, bool)> =
+            AHashMap::new();
+        let mut button_state: AHashMap<ControllerId, AHashSet<Button>> =
             AHashMap::new();
 
         // Initial enumeration
@@ -133,6 +135,7 @@ pub(crate) fn start_runtime_thread(
                         joysticks.remove(&id);
                         haptics.remove(&id);
                         trigger_state.remove(&id);
+                        button_state.remove(&id);
                         if let Ok(mut map) = inner.controllers_info.write() {
                             map.remove(&id);
                         }
@@ -140,24 +143,30 @@ pub(crate) fn start_runtime_thread(
                     }
                     Event::ControllerButtonDown { which, button, .. } => {
                         if let Some(btn) = map_sdl_button(button) {
-                            broadcast(
-                                &inner,
-                                ControllerEvent::ButtonPressed {
-                                    id: which as ControllerId,
-                                    button: btn,
-                                },
-                            );
+                            let id = which as ControllerId;
+                            if button_state.entry(id).or_default().insert(btn) {
+                                broadcast(
+                                    &inner,
+                                    ControllerEvent::ButtonPressed {
+                                        id,
+                                        button: btn,
+                                    },
+                                );
+                            }
                         }
                     }
                     Event::ControllerButtonUp { which, button, .. } => {
                         if let Some(btn) = map_sdl_button(button) {
-                            broadcast(
-                                &inner,
-                                ControllerEvent::ButtonReleased {
-                                    id: which as ControllerId,
-                                    button: btn,
-                                },
-                            );
+                            let id = which as ControllerId;
+                            if button_state.get_mut(&id).map_or(false, |s| s.remove(&btn)) {
+                                broadcast(
+                                    &inner,
+                                    ControllerEvent::ButtonReleased {
+                                        id,
+                                        button: btn,
+                                    },
+                                );
+                            }
                         }
                     }
                     Event::ControllerAxisMotion {
@@ -263,6 +272,7 @@ pub(crate) fn start_runtime_thread(
                             joysticks.remove(&id);
                             haptics.remove(&id);
                             trigger_state.remove(&id);
+                            button_state.remove(&id);
                             if let Ok(mut map) = inner.controllers_info.write() {
                                 map.remove(&id);
                             }
@@ -270,24 +280,30 @@ pub(crate) fn start_runtime_thread(
                         }
                         Event::ControllerButtonDown { which, button, .. } => {
                             if let Some(btn) = map_sdl_button(button) {
-                                broadcast(
-                                    &inner,
-                                    ControllerEvent::ButtonPressed {
-                                        id: which as ControllerId,
-                                        button: btn,
-                                    },
-                                );
+                                let id = which as ControllerId;
+                                if button_state.entry(id).or_default().insert(btn) {
+                                    broadcast(
+                                        &inner,
+                                        ControllerEvent::ButtonPressed {
+                                            id,
+                                            button: btn,
+                                        },
+                                    );
+                                }
                             }
                         }
                         Event::ControllerButtonUp { which, button, .. } => {
                             if let Some(btn) = map_sdl_button(button) {
-                                broadcast(
-                                    &inner,
-                                    ControllerEvent::ButtonReleased {
-                                        id: which as ControllerId,
-                                        button: btn,
-                                    },
-                                );
+                                let id = which as ControllerId;
+                                if button_state.get_mut(&id).map_or(false, |s| s.remove(&btn)) {
+                                    broadcast(
+                                        &inner,
+                                        ControllerEvent::ButtonReleased {
+                                            id,
+                                            button: btn,
+                                        },
+                                    );
+                                }
                             }
                         }
                         Event::ControllerAxisMotion {

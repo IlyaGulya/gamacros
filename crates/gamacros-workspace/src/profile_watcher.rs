@@ -58,8 +58,11 @@ impl<W: notify::Watcher> ProfileWatcher<W> {
         path: &Path,
         tx: ProfileEventSender,
     ) -> Result<Self, WatcherError> {
-        // Resolve symlinks so the watcher monitors the real file
+        // Resolve symlinks so the watcher monitors the real file's directory.
+        // macOS FSEvents works at the directory level, so we watch the parent
+        // directory and filter events by filename.
         let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        let watch_dir = resolved.parent().unwrap_or(&resolved).to_owned();
         let path_c = resolved.clone();
         let tx_c = tx.clone();
 
@@ -72,6 +75,12 @@ impl<W: notify::Watcher> ProfileWatcher<W> {
             move |events: DebounceEventResult| match events {
                 Ok(events) => {
                     for event in events {
+                        // Filter: only react to events for our specific file
+                        let event_path = fs::canonicalize(&event.path)
+                            .unwrap_or_else(|_| event.path.clone());
+                        if event_path != path_c {
+                            continue;
+                        }
                         match event.kind {
                             DebouncedEventKind::Any
                             | DebouncedEventKind::AnyContinuous => {
@@ -94,7 +103,7 @@ impl<W: notify::Watcher> ProfileWatcher<W> {
 
         debouncer
             .watcher()
-            .watch(&resolved, RecursiveMode::NonRecursive)?;
+            .watch(&watch_dir, RecursiveMode::NonRecursive)?;
 
         Ok(Self { watcher: debouncer })
     }

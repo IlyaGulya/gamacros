@@ -34,11 +34,19 @@ pub(crate) struct ProfileV1ButtonRule {
     #[serde(default)]
     pub keystroke: Option<String>,
     #[serde(default)]
+    pub tap: Option<String>,
+    #[serde(default)]
     pub macros: Option<Vec<String>>,
     #[serde(default)]
     pub shell: Option<String>,
     #[serde(default)]
     pub click: Option<String>,
+    #[serde(default)]
+    pub rawkey: Option<String>,
+    #[serde(default)]
+    pub repeat_delay_ms: Option<u64>,
+    #[serde(default)]
+    pub repeat_interval_ms: Option<u64>,
 }
 
 #[derive(Debug, Clone, Deserialize)]

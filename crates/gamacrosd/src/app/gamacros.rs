@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::sync::Arc;
+use std::time::Instant;
 use ahash::AHashMap;
 
 use colored::Colorize;
@@ -9,7 +10,7 @@ use gamacros_bit_mask::Bitmask;
 use gamacros_gamepad::{Button, ControllerId, ControllerInfo, Axis as CtrlAxis};
 use gamacros_workspace::{
     ButtonAction, ControllerSettings, Macros, MouseButton, MouseClickType,
-    Profile, StickRules, StickMode,
+    Profile, RawModifierKey, StickRules, StickMode,
 };
 
 use crate::{app::ButtonPhase, print_debug, print_info};
@@ -27,6 +28,8 @@ pub enum Action {
     MouseMove { dx: i32, dy: i32 },
     Scroll { h: i32, v: i32 },
     Rumble { id: ControllerId, ms: u32 },
+    RawModifierPress(RawModifierKey),
+    RawModifierRelease(RawModifierKey),
 }
 
 #[derive(Debug)]
@@ -37,6 +40,16 @@ struct ControllerState {
     axes: [f32; 6],
 }
 
+const DEFAULT_REPEAT_DELAY_MS: u64 = 400;
+const DEFAULT_REPEAT_INTERVAL_MS: u64 = 50;
+
+struct ButtonRepeatTask {
+    key: KeyCombo,
+    interval_ms: u64,
+    next_fire: Instant,
+    delay_done: bool,
+}
+
 pub struct Gamacros {
     pub workspace: Option<Profile>,
     active_app: Box<str>,
@@ -45,6 +58,7 @@ pub struct Gamacros {
     active_stick_rules: Option<Arc<StickRules>>, // keep original for potential future use
     compiled_stick_rules: Option<CompiledStickRules>,
     axes_scratch: Vec<(ControllerId, [f32; 6])>,
+    button_repeats: AHashMap<(ControllerId, Button), ButtonRepeatTask>,
 }
 
 impl Default for Gamacros {
@@ -63,6 +77,7 @@ impl Gamacros {
             active_stick_rules: None,
             compiled_stick_rules: None,
             axes_scratch: Vec::new(),
+            button_repeats: AHashMap::new(),
         }
     }
 
@@ -105,15 +120,11 @@ impl Gamacros {
             info.product_id
         );
 
-        let Some(workspace) = self.workspace.as_ref() else {
-            return;
-        };
-        let settings = workspace
-            .controllers
-            .get(&(info.vendor_id, info.product_id))
-            .cloned();
+        let settings = self.workspace.as_ref()
+            .and_then(|ws| ws.controllers.get(&(info.vendor_id, info.product_id)).cloned())
+            .unwrap_or_default();
         let state = ControllerState {
-            mapping: settings.unwrap_or_default(),
+            mapping: settings,
             pressed: Bitmask::empty(),
             rumble: info.supports_rumble,
             axes: [0.0; 6],
@@ -210,18 +221,44 @@ impl Gamacros {
         self.sticks.borrow_mut().process_due_repeats(now, &mut sink);
     }
 
+    /// Return next due time for any button repeat task, if any.
+    pub fn next_button_repeat_due(&self) -> Option<Instant> {
+        self.button_repeats.values().map(|t| t.next_fire).min()
+    }
+
+    /// Process button repeat tasks due up to `now`.
+    pub fn process_button_repeats<F: FnMut(Action)>(&mut self, now: Instant, sink: &mut F) {
+        for task in self.button_repeats.values_mut() {
+            if now >= task.next_fire {
+                sink(Action::KeyTap(task.key.clone()));
+                if !task.delay_done {
+                    task.delay_done = true;
+                }
+                task.next_fire = now + std::time::Duration::from_millis(task.interval_ms);
+            }
+        }
+    }
+
+    /// Whether any button repeat tasks are active.
+    pub fn has_active_button_repeats(&self) -> bool {
+        !self.button_repeats.is_empty()
+    }
+
     /// Whether any periodic processing is needed right now.
     /// True when there are tick-requiring stick modes and some axis deviates from neutral,
     /// or when repeat tasks are active (to drain their timers).
     pub fn needs_tick(&self) -> bool {
         (self.has_tick_modes() && self.has_axis_activity(0.05))
             || self.sticks.borrow().has_active_repeats()
+            || self.has_active_button_repeats()
     }
 
     /// Hint whether a faster tick would improve responsiveness.
     /// True when there is recent/ongoing axis activity or repeat tasks are active.
     pub fn wants_fast_tick(&self) -> bool {
-        self.has_axis_activity(0.05) || self.sticks.borrow().has_active_repeats()
+        self.has_axis_activity(0.05)
+            || self.sticks.borrow().has_active_repeats()
+            || self.has_active_button_repeats()
     }
 
     /// Whether the current profile has any stick modes that require periodic ticks.
@@ -297,18 +334,19 @@ impl Gamacros {
             print_debug!("ignoring button for unknown controller {id}");
             return;
         };
-        let button = state.mapping.mapping.get(&button).unwrap_or(&button);
+        let button = *state.mapping.mapping.get(&button).unwrap_or(&button);
+        let rumble = state.rumble;
 
         // snapshot before change
         let prev_pressed = state.pressed;
 
         if phase == ButtonPhase::Pressed {
-            state.pressed.insert(*button);
+            state.pressed.insert(button);
         } else {
-            state.pressed.remove(*button);
+            state.pressed.remove(button);
         }
 
-        // snapshot after change
+        // snapshot after change — drop mutable borrow of controllers after this
         let now_pressed = state.pressed;
 
         // First pass: find max_bits among rules that should fire
@@ -347,13 +385,27 @@ impl Gamacros {
             match phase {
                 ButtonPhase::Pressed => {
                     if let Some(ms) = rule.vibrate {
-                        if self.supports_rumble(id) {
+                        if rumble {
                             sink(Action::Rumble { id, ms: ms as u32 });
                         }
                     }
                     match rule.action.clone() {
                         ButtonAction::Keystroke(k) => {
-                            sink(Action::KeyPress((*k).clone()));
+                            sink(Action::KeyTap((*k).clone()));
+                            let delay_ms = rule.repeat_delay_ms.unwrap_or(DEFAULT_REPEAT_DELAY_MS);
+                            let interval_ms = rule.repeat_interval_ms.unwrap_or(DEFAULT_REPEAT_INTERVAL_MS);
+                            self.button_repeats.insert(
+                                (id, button),
+                                ButtonRepeatTask {
+                                    key: (*k).clone(),
+                                    interval_ms,
+                                    next_fire: Instant::now() + std::time::Duration::from_millis(delay_ms),
+                                    delay_done: false,
+                                },
+                            );
+                        }
+                        ButtonAction::TapKeystroke(k) => {
+                            sink(Action::KeyTap((*k).clone()));
                         }
                         ButtonAction::Macros(m) => {
                             sink(Action::Macros(m));
@@ -365,11 +417,20 @@ impl Gamacros {
                         ButtonAction::MouseClick { button, click_type } => {
                             sink(Action::MouseClick { button, click_type });
                         }
+                        ButtonAction::RawModifier(key) => {
+                            sink(Action::RawModifierPress(key));
+                        }
                     }
                 }
                 ButtonPhase::Released => {
-                    if let ButtonAction::Keystroke(k) = rule.action.clone() {
-                        sink(Action::KeyRelease((*k).clone()));
+                    match rule.action.clone() {
+                        ButtonAction::Keystroke(_) => {
+                            self.button_repeats.remove(&(id, button));
+                        }
+                        ButtonAction::RawModifier(key) => {
+                            sink(Action::RawModifierRelease(key));
+                        }
+                        _ => {}
                     }
                 }
             }

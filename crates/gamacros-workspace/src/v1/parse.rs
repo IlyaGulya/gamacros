@@ -8,7 +8,7 @@ use crate::v1::profile::{ProfileV1ButtonRule, ProfileV1Stick};
 use crate::profile::{
     AppRules, ArrowsParams, Axis, ButtonAction, ButtonRule, ButtonRules,
     ControllerSettings, ControllerSettingsMap, Macros, MouseButton, MouseClickType,
-    MouseParams, Profile, RuleMap, ScrollParams, StepperParams, StickMode,
+    MouseParams, Profile, RawModifierKey, RuleMap, ScrollParams, StepperParams, StickMode,
     StickRules, StickSide,
 };
 use crate::ButtonChord;
@@ -183,25 +183,35 @@ fn parse_button_rule(
     raw: ProfileV1ButtonRule,
     target_name: &str,
 ) -> Result<ButtonRule, Error> {
-    let action = match (raw.keystroke, raw.macros, raw.shell, raw.click) {
-        (Some(keystroke), None, None, None) => {
+    let action = match (raw.keystroke, raw.tap, raw.macros, raw.shell, raw.click, raw.rawkey) {
+        (Some(keystroke), None, None, None, None, None) => {
             let keystroke = parse_keystroke(&keystroke)?;
             ButtonAction::Keystroke(Arc::new(keystroke))
         }
-        (None, Some(macros), None, None) => {
+        (None, Some(tap), None, None, None, None) => {
+            let keystroke = parse_keystroke(&tap)?;
+            ButtonAction::TapKeystroke(Arc::new(keystroke))
+        }
+        (None, None, Some(macros), None, None, None) => {
             let macros = parse_macros(&macros)?;
             ButtonAction::Macros(Arc::new(macros))
         }
-        (None, None, Some(shell), None) => ButtonAction::Shell(shell),
-        (None, None, None, Some(click)) => {
+        (None, None, None, Some(shell), None, None) => ButtonAction::Shell(shell),
+        (None, None, None, None, Some(click), None) => {
             let (button, click_type) = parse_click_spec(&click, target_name)?;
             ButtonAction::MouseClick { button, click_type }
+        }
+        (None, None, None, None, None, Some(rawkey)) => {
+            let modifier = parse_raw_modifier(&rawkey, target_name)?;
+            ButtonAction::RawModifier(modifier)
         }
         _ => return Err(Error::InvalidActions(target_name.to_string())),
     };
 
     Ok(ButtonRule {
         vibrate: raw.vibrate,
+        repeat_delay_ms: raw.repeat_delay_ms,
+        repeat_interval_ms: raw.repeat_interval_ms,
         action,
     })
 }
@@ -219,6 +229,25 @@ fn parse_click_spec(
         "middle_double" => Ok((MouseButton::Middle, MouseClickType::DoubleClick)),
         _ => Err(Error::InvalidActions(format!(
             "{target_name}: unknown click type '{spec}'"
+        ))),
+    }
+}
+
+fn parse_raw_modifier(
+    spec: &str,
+    target_name: &str,
+) -> Result<RawModifierKey, Error> {
+    match spec {
+        "ctrl" | "control" | "lctrl" => Ok(RawModifierKey::Control),
+        "rctrl" | "rcontrol" | "right_control" => Ok(RawModifierKey::RControl),
+        "shift" | "lshift" => Ok(RawModifierKey::Shift),
+        "rshift" | "right_shift" => Ok(RawModifierKey::RShift),
+        "cmd" | "command" | "meta" | "lcmd" | "super" => Ok(RawModifierKey::Command),
+        "rcmd" | "rcommand" | "rmeta" | "rsuper" | "right_command" => Ok(RawModifierKey::RCommand),
+        "alt" | "option" | "lalt" | "loption" => Ok(RawModifierKey::Option),
+        "ralt" | "roption" | "right_option" | "right_alt" => Ok(RawModifierKey::ROption),
+        _ => Err(Error::InvalidActions(format!(
+            "{target_name}: unknown rawkey modifier '{spec}'. Use: ctrl, rctrl, shift, rshift, cmd, rcmd, alt, ralt"
         ))),
     }
 }
