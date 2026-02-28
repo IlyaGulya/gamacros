@@ -58,7 +58,9 @@ impl<W: notify::Watcher> ProfileWatcher<W> {
         path: &Path,
         tx: ProfileEventSender,
     ) -> Result<Self, WatcherError> {
-        let path_c = path.to_owned();
+        // Resolve symlinks so the watcher monitors the real file
+        let resolved = fs::canonicalize(path).unwrap_or_else(|_| path.to_owned());
+        let path_c = resolved.clone();
         let tx_c = tx.clone();
 
         let debouncer_config = notify_debouncer_mini::Config::default()
@@ -92,7 +94,7 @@ impl<W: notify::Watcher> ProfileWatcher<W> {
 
         debouncer
             .watcher()
-            .watch(path, RecursiveMode::NonRecursive)?;
+            .watch(&resolved, RecursiveMode::NonRecursive)?;
 
         Ok(Self { watcher: debouncer })
     }
