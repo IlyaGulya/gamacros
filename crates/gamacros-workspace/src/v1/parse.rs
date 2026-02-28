@@ -7,8 +7,9 @@ use gamacros_gamepad::Button;
 use crate::v1::profile::{ProfileV1ButtonRule, ProfileV1Stick};
 use crate::profile::{
     AppRules, ArrowsParams, Axis, ButtonAction, ButtonRule, ButtonRules,
-    ControllerSettings, ControllerSettingsMap, Macros, MouseParams, Profile,
-    RuleMap, ScrollParams, StepperParams, StickMode, StickRules, StickSide,
+    ControllerSettings, ControllerSettingsMap, Macros, MouseButton, MouseClickType,
+    MouseParams, Profile, RuleMap, ScrollParams, StepperParams, StickMode,
+    StickRules, StickSide,
 };
 use crate::ButtonChord;
 
@@ -182,16 +183,20 @@ fn parse_button_rule(
     raw: ProfileV1ButtonRule,
     target_name: &str,
 ) -> Result<ButtonRule, Error> {
-    let action = match (raw.keystroke, raw.macros, raw.shell) {
-        (Some(keystroke), None, None) => {
+    let action = match (raw.keystroke, raw.macros, raw.shell, raw.click) {
+        (Some(keystroke), None, None, None) => {
             let keystroke = parse_keystroke(&keystroke)?;
             ButtonAction::Keystroke(Arc::new(keystroke))
         }
-        (None, Some(macros), None) => {
+        (None, Some(macros), None, None) => {
             let macros = parse_macros(&macros)?;
             ButtonAction::Macros(Arc::new(macros))
         }
-        (None, None, Some(shell)) => ButtonAction::Shell(shell),
+        (None, None, Some(shell), None) => ButtonAction::Shell(shell),
+        (None, None, None, Some(click)) => {
+            let (button, click_type) = parse_click_spec(&click, target_name)?;
+            ButtonAction::MouseClick { button, click_type }
+        }
         _ => return Err(Error::InvalidActions(target_name.to_string())),
     };
 
@@ -199,6 +204,23 @@ fn parse_button_rule(
         vibrate: raw.vibrate,
         action,
     })
+}
+
+fn parse_click_spec(
+    spec: &str,
+    target_name: &str,
+) -> Result<(MouseButton, MouseClickType), Error> {
+    match spec {
+        "left" => Ok((MouseButton::Left, MouseClickType::Click)),
+        "right" => Ok((MouseButton::Right, MouseClickType::Click)),
+        "middle" => Ok((MouseButton::Middle, MouseClickType::Click)),
+        "double" => Ok((MouseButton::Left, MouseClickType::DoubleClick)),
+        "right_double" => Ok((MouseButton::Right, MouseClickType::DoubleClick)),
+        "middle_double" => Ok((MouseButton::Middle, MouseClickType::DoubleClick)),
+        _ => Err(Error::InvalidActions(format!(
+            "{target_name}: unknown click type '{spec}'"
+        ))),
+    }
 }
 
 fn parse_keystroke(input: &str) -> Result<KeyCombo, Error> {

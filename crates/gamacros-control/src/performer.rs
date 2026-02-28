@@ -1,4 +1,4 @@
-use enigo::{Axis, Coordinate, Enigo, InputResult, Mouse, NewConError, Settings};
+use enigo::{Axis, Button, Coordinate, Direction, Enigo, InputResult, Mouse, NewConError, Settings};
 
 use crate::KeyCombo;
 
@@ -64,5 +64,16 @@ impl Performer {
     #[cfg(not(target_os = "macos"))]
     pub fn scroll_y(&mut self, value: i32) -> InputResult<()> {
         self.enigo.scroll(value, Axis::Vertical)
+    }
+
+    /// Click a mouse button.
+    pub fn mouse_click(&mut self, button: Button) -> InputResult<()> {
+        self.enigo.button(button, Direction::Click)
+    }
+
+    /// Double-click a mouse button.
+    pub fn mouse_double_click(&mut self, button: Button) -> InputResult<()> {
+        self.enigo.button(button, Direction::Click)?;
+        self.enigo.button(button, Direction::Click)
     }
 }

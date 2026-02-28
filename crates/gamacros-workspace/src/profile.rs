@@ -66,12 +66,28 @@ pub type ControllerSettingsMap = AHashMap<ControllerId, ControllerSettings>;
 /// A set of macros.
 pub type Macros = SmallVec<[KeyCombo; 4]>;
 
+/// A mouse button.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+}
+
+/// A mouse click type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MouseClickType {
+    Click,
+    DoubleClick,
+}
+
 /// A action for a gamepad button.
 #[derive(Debug, Clone)]
 pub enum ButtonAction {
     Keystroke(Arc<KeyCombo>),
     Macros(Arc<Macros>),
     Shell(String),
+    MouseClick { button: MouseButton, click_type: MouseClickType },
 }
 
 /// A rule for a gamepad button.

@@ -8,7 +8,8 @@ use gamacros_control::KeyCombo;
 use gamacros_bit_mask::Bitmask;
 use gamacros_gamepad::{Button, ControllerId, ControllerInfo, Axis as CtrlAxis};
 use gamacros_workspace::{
-    ButtonAction, ControllerSettings, Macros, Profile, StickRules, StickMode,
+    ButtonAction, ControllerSettings, Macros, MouseButton, MouseClickType,
+    Profile, StickRules, StickMode,
 };
 
 use crate::{app::ButtonPhase, print_debug, print_info};
@@ -22,6 +23,7 @@ pub enum Action {
     KeyTap(KeyCombo),
     Macros(Arc<Macros>),
     Shell(String),
+    MouseClick { button: MouseButton, click_type: MouseClickType },
     MouseMove { dx: i32, dy: i32 },
     Scroll { h: i32, v: i32 },
     Rumble { id: ControllerId, ms: u32 },
@@ -343,6 +345,9 @@ impl Gamacros {
                         ButtonAction::Shell(s) => {
                             print_debug!("shell command: {}", s);
                             sink(Action::Shell(s));
+                        }
+                        ButtonAction::MouseClick { button, click_type } => {
+                            sink(Action::MouseClick { button, click_type });
                         }
                     }
                 }

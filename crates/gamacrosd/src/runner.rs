@@ -4,6 +4,8 @@ use colored::Colorize;
 use gamacros_control::Performer;
 use gamacros_gamepad::ControllerManager;
 
+use gamacros_workspace::{MouseButton, MouseClickType};
+
 use crate::{app::Action, print_error, print_info};
 
 const DEFAULT_SHELL: &str = "/bin/zsh";
@@ -41,6 +43,17 @@ impl<'a> ActionRunner<'a> {
             }
             Action::Shell(s) => {
                 let _ = self.run_shell(&s);
+            }
+            Action::MouseClick { button, click_type } => {
+                let enigo_button = match button {
+                    MouseButton::Left => enigo::Button::Left,
+                    MouseButton::Right => enigo::Button::Right,
+                    MouseButton::Middle => enigo::Button::Middle,
+                };
+                let _ = match click_type {
+                    MouseClickType::Click => self.keypress.mouse_click(enigo_button),
+                    MouseClickType::DoubleClick => self.keypress.mouse_double_click(enigo_button),
+                };
             }
             Action::MouseMove { dx, dy } => {
                 let _ = self.keypress.mouse_move(dx, dy);

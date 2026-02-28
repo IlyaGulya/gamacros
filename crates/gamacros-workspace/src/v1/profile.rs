@@ -37,6 +37,8 @@ pub(crate) struct ProfileV1ButtonRule {
     pub macros: Option<Vec<String>>,
     #[serde(default)]
     pub shell: Option<String>,
+    #[serde(default)]
+    pub click: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
