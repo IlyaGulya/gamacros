@@ -82,15 +82,15 @@ pub(crate) fn key_code_for_key_string(ch: char) -> u16 {
         'r' => 15,
         'y' => 16,
         't' => 17,
-        // '1' => 18,
-        // '2' => 19,
-        // '3' => 20,
-        // '4' => 21,
-        // '6' => 22,
-        // '5' => 23,
+        '1' => 18,
+        '2' => 19,
+        '3' => 20,
+        '4' => 21,
+        '6' => 22,
+        '5' => 23,
         '=' => 24,
-        // '9' => 25,
-        // '7' => 26,
+        '9' => 25,
+        '7' => 26,
         '-' => 27,
         '8' => 28,
         '0' => 29,
@@ -215,7 +215,7 @@ pub(crate) fn parse_key(input: &str) -> Option<Key> {
 
     if input.len() == 1 {
         let ch = input.chars().next().expect("input must be not empty");
-        if ch.is_ascii_lowercase() {
+        if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
             return Some(Key::Other(key_code_for_key_string(ch) as u32));
         }
     }
