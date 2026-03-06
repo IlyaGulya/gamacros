@@ -173,7 +173,7 @@ impl<'a> ActionRunner<'a> {
         }
     }
 
-    pub fn set_shell(&mut self, shell: Box<str>) {
-        self.shell = Some(shell);
+    pub fn set_shell(&mut self, shell: Option<Box<str>>) {
+        self.shell = shell;
     }
 }

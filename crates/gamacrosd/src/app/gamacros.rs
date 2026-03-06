@@ -10,10 +10,11 @@ use gamacros_bit_mask::Bitmask;
 use gamacros_gamepad::{Button, ControllerId, ControllerInfo, Axis as CtrlAxis};
 use gamacros_workspace::{
     ButtonAction, ControllerSettings, Macros, MouseButton, MouseClickType, Profile,
-    RawModifierKey, StickRules, StickMode,
+    RawModifierKey, StickMode,
 };
 
 use crate::{app::ButtonPhase, print_debug, print_info};
+use super::binding::{BindingContext, BindingSource};
 use super::stick::{StickProcessor, CompiledStickRules};
 use super::stick::util::axis_index as stick_axis_index;
 
@@ -71,10 +72,9 @@ struct ButtonRepeatTask {
 pub struct Gamacros {
     pub workspace: Option<Profile>,
     active_app: Box<str>,
+    binding: BindingContext,
     controllers: AHashMap<ControllerId, ControllerState>,
     sticks: RefCell<StickProcessor>,
-    active_stick_rules: Option<Arc<StickRules>>, // keep original for potential future use
-    compiled_stick_rules: Option<CompiledStickRules>,
     axes_scratch: Vec<(ControllerId, [f32; 6])>,
     button_repeats: AHashMap<(ControllerId, Button), ButtonRepeatTask>,
 }
@@ -90,10 +90,9 @@ impl Gamacros {
         Self {
             workspace: None,
             active_app: "".into(),
+            binding: BindingContext::default(),
             controllers: AHashMap::new(),
             sticks: RefCell::new(StickProcessor::new()),
-            active_stick_rules: None,
-            compiled_stick_rules: None,
             axes_scratch: Vec::new(),
             button_repeats: AHashMap::new(),
         }
@@ -105,34 +104,14 @@ impl Gamacros {
 
     pub fn remove_workspace(&mut self) {
         self.workspace = None;
-        self.active_stick_rules = None;
-        self.compiled_stick_rules = None;
+        self.binding = BindingContext::empty(self.active_app.as_ref());
         self.button_repeats.clear();
     }
 
     pub fn set_workspace(&mut self, workspace: Profile) {
         self.workspace = Some(workspace);
         self.button_repeats.clear();
-        // Recompute stick rules for current active app (workspace may have changed)
-        if !self.active_app.is_empty() {
-            if let Some(ws) = self.workspace.as_ref() {
-                if let Some(app_rules) = ws
-                    .rules
-                    .get(&*self.active_app)
-                    .or_else(|| ws.rules.get("common"))
-                {
-                    self.active_stick_rules =
-                        Some(Arc::new(app_rules.sticks.clone()));
-                    self.compiled_stick_rules = self
-                        .active_stick_rules
-                        .as_deref()
-                        .map(CompiledStickRules::from_rules);
-                } else {
-                    self.active_stick_rules = None;
-                    self.compiled_stick_rules = None;
-                }
-            }
-        }
+        self.rebuild_binding_context();
     }
 
     pub fn add_controller(&mut self, info: ControllerInfo) {
@@ -186,34 +165,15 @@ impl Gamacros {
 
         self.active_app = app.into();
         self.sticks.borrow_mut().on_app_change();
-        let Some(workspace) = self.workspace.as_ref() else {
-            return;
-        };
-
-        self.active_stick_rules = workspace
-            .rules
-            .get(&*self.active_app)
-            .or_else(|| workspace.rules.get("common"))
-            .map(|r| Arc::new(r.sticks.clone()));
-
-        self.compiled_stick_rules = self
-            .active_stick_rules
-            .as_deref()
-            .map(CompiledStickRules::from_rules);
-
-        print_debug!(
-            "active stick rules updated: app={app} has_rules={} has_compiled={}",
-            self.active_stick_rules.is_some(),
-            self.compiled_stick_rules.is_some()
-        );
-    }
-
-    pub fn get_active_app(&self) -> &str {
-        &self.active_app
+        self.rebuild_binding_context();
     }
 
     pub fn get_compiled_stick_rules(&self) -> Option<&CompiledStickRules> {
-        self.compiled_stick_rules.as_ref()
+        self.binding.compiled_stick_rules()
+    }
+
+    pub fn current_shell(&self) -> Option<Box<str>> {
+        self.binding.shell().map(Into::into)
     }
 
     pub fn on_axis_motion(&mut self, id: ControllerId, axis: CtrlAxis, value: f32) {
@@ -412,12 +372,17 @@ impl Gamacros {
     }
 
     fn has_mouse_move_mode(&self) -> bool {
-        let Some(bindings) = self.get_compiled_stick_rules() else {
+        let Some(bindings) = self.binding.stick_rules() else {
             return false;
         };
 
-        matches!(bindings.left(), Some(StickMode::MouseMove(_)))
-            || matches!(bindings.right(), Some(StickMode::MouseMove(_)))
+        matches!(
+            bindings.get(&gamacros_workspace::StickSide::Left),
+            Some(StickMode::MouseMove(_))
+        ) || matches!(
+            bindings.get(&gamacros_workspace::StickSide::Right),
+            Some(StickMode::MouseMove(_))
+        )
     }
 
     /// Detect if any controller axis deviates beyond a small threshold.
@@ -443,27 +408,20 @@ impl Gamacros {
         mut sink: F,
     ) {
         print_debug!("handle button - {id} {button:?} {phase:?}");
-        let active_app = self.get_active_app();
-        let Some(workspace) = self.workspace.as_ref() else {
+        if self.binding.is_blacklisted() {
+            print_debug!(
+                "ignoring button for blacklisted app {}",
+                self.binding.active_app()
+            );
             return;
         };
-        let app_rules = match workspace.rules.get(active_app) {
-            Some(r) => {
-                print_debug!("using app-specific rules for {active_app}");
-                r
-            }
-            None => match workspace.rules.get("common") {
-                Some(r) => {
-                    print_debug!("using common rules (no rules for {active_app})");
-                    r
-                }
-                None => {
-                    print_debug!(
-                        "no rules found for {active_app} and no common rules"
-                    );
-                    return;
-                }
-            },
+        let Some(button_rules) = self.binding.button_rules() else {
+            print_debug!(
+                "no button rules in binding context for app={} source={:?}",
+                self.binding.active_app(),
+                self.binding.source()
+            );
+            return;
         };
         let Some(state) = self.controllers.get_mut(&id) else {
             print_debug!("ignoring button for unknown controller {id}");
@@ -486,7 +444,7 @@ impl Gamacros {
 
         // First pass: find max_bits among rules that should fire
         let mut max_bits: u32 = 0;
-        for (target, _rule) in app_rules.buttons.iter() {
+        for (target, _rule) in button_rules.iter() {
             let was = prev_pressed.is_superset(target);
             let is_now = now_pressed.is_superset(target);
             let fire = match phase {
@@ -503,14 +461,14 @@ impl Gamacros {
         if max_bits == 0 {
             print_debug!(
                 "no matching rule for pressed={now_pressed:?} (button_rules={})",
-                app_rules.buttons.len()
+                button_rules.len()
             );
             return;
         }
         print_debug!("firing rule with max_bits={max_bits}");
 
         // Second pass: execute only rules with that cardinality
-        for (target, rule) in app_rules.buttons.iter() {
+        for (target, rule) in button_rules.iter() {
             let was = prev_pressed.is_superset(target);
             let is_now = now_pressed.is_superset(target);
             let fire = match phase {
@@ -581,6 +539,25 @@ impl Gamacros {
                     _ => {}
                 },
             }
+        }
+    }
+
+    fn rebuild_binding_context(&mut self) {
+        self.binding = BindingContext::rebuild(
+            self.workspace.as_ref(),
+            self.active_app.as_ref(),
+        );
+        print_debug!(
+            "binding context rebuilt: app={} source={:?} has_buttons={} has_sticks={} has_compiled={} shell={}",
+            self.binding.active_app(),
+            self.binding.source(),
+            self.binding.button_rules().is_some(),
+            self.binding.stick_rules().is_some(),
+            self.binding.compiled_stick_rules().is_some(),
+            self.binding.shell().is_some()
+        );
+        if matches!(self.binding.source(), BindingSource::Blacklisted) {
+            self.button_repeats.clear();
         }
     }
 }

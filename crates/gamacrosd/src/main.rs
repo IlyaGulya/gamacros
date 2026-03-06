@@ -278,19 +278,19 @@ fn handle_domain_event(
                 return EventLoopControl::Continue;
             };
             gamacros.set_active_app(&bundle_id);
+            action_runner.set_shell(gamacros.current_shell());
             wake_state.need_reschedule = true;
         }
         DomainEvent::Profile(profile_event) => match profile_event {
             ProfileEvent::Changed(workspace) => {
                 print_info!("profile changed, updating workspace");
-                if let Some(shell) = workspace.shell.clone() {
-                    action_runner.set_shell(shell);
-                }
                 gamacros.set_workspace(workspace);
+                action_runner.set_shell(gamacros.current_shell());
                 wake_state.need_reschedule = true;
             }
             ProfileEvent::Removed => {
                 gamacros.remove_workspace();
+                action_runner.set_shell(gamacros.current_shell());
                 wake_state.need_reschedule = true;
             }
             ProfileEvent::Error(error) => {
