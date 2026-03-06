@@ -274,7 +274,10 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
             .transpose()
             .expect("failed to start workspace watcher");
 
-        let maybe_workspace_rx = maybe_watcher.map(|(_watcher, rx)| rx);
+        let (maybe_workspace_rx, _profile_watcher) = match maybe_watcher {
+            Some((watcher, rx)) => (Some(rx), Some(watcher)),
+            None => (None, None),
+        };
 
         let mut action_runner = ActionRunner::new(&mut keypress, &manager);
 

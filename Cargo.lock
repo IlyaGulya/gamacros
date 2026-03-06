@@ -672,6 +672,7 @@ dependencies = [
  "gamacros-bit-mask",
  "gamacros-control",
  "gamacros-gamepad",
+ "log",
  "notify",
  "notify-debouncer-mini",
  "serde",

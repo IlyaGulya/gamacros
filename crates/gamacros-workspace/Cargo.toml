@@ -20,6 +20,7 @@ serde = { workspace = true, features = ["derive"] }
 serde_yaml = { workspace = true }
 ahash = { workspace = true, features = ["serde"] }
 smallvec = { workspace = true }
+log = { workspace = true }
 notify = { workspace = true }
 notify-debouncer-mini = { workspace = true }
 

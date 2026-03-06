@@ -91,10 +91,12 @@ impl Gamacros {
         self.workspace = None;
         self.active_stick_rules = None;
         self.compiled_stick_rules = None;
+        self.button_repeats.clear();
     }
 
     pub fn set_workspace(&mut self, workspace: Profile) {
         self.workspace = Some(workspace);
+        self.button_repeats.clear();
         // Recompute stick rules for current active app (workspace may have changed)
         if !self.active_app.is_empty() {
             if let Some(ws) = self.workspace.as_ref() {
@@ -191,6 +193,8 @@ impl Gamacros {
 
     pub fn on_controller_disconnected(&mut self, id: ControllerId) {
         self.sticks.borrow_mut().release_all_for(id);
+        // Clear any active button repeat tasks for this controller
+        self.button_repeats.retain(|(cid, _), _| *cid != id);
     }
 
     pub fn on_tick_with<F: FnMut(Action)>(&mut self, sink: F) {
