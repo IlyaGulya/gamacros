@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::sync::Arc;
 use std::time::Instant;
 use ahash::AHashMap;
 
@@ -8,48 +7,13 @@ use colored::Colorize;
 use gamacros_control::KeyCombo;
 use gamacros_bit_mask::Bitmask;
 use gamacros_gamepad::{Button, ControllerId, ControllerInfo, Axis as CtrlAxis};
-use gamacros_workspace::{
-    ButtonAction, ControllerSettings, Macros, MouseButton, MouseClickType, Profile,
-    RawModifierKey, StickMode,
-};
+use gamacros_workspace::{ButtonAction, ControllerSettings, Profile, StickMode};
 
 use crate::{app::ButtonPhase, print_debug, print_info};
 use super::binding::{BindingContext, BindingSource};
+use super::effect::Effect;
 use super::stick::{StickProcessor, CompiledStickRules};
 use super::stick::util::axis_index as stick_axis_index;
-
-#[derive(Debug, Clone)]
-pub enum Action {
-    KeyPress(KeyCombo),
-    KeyRelease(KeyCombo),
-    KeyTap(KeyCombo),
-    Macros(Arc<Macros>),
-    Shell(String),
-    MouseClick {
-        button: MouseButton,
-        click_type: MouseClickType,
-    },
-    MousePress {
-        button: MouseButton,
-    },
-    MouseRelease {
-        button: MouseButton,
-    },
-    MouseMove {
-        dx: i32,
-        dy: i32,
-    },
-    Scroll {
-        h: i32,
-        v: i32,
-    },
-    Rumble {
-        id: ControllerId,
-        ms: u32,
-    },
-    RawModifierPress(RawModifierKey),
-    RawModifierRelease(RawModifierKey),
-}
 
 #[derive(Debug)]
 struct ControllerState {
@@ -204,7 +168,7 @@ impl Gamacros {
         self.button_repeats.retain(|(cid, _), _| *cid != id);
     }
 
-    pub fn on_tick_with<F: FnMut(Action)>(&mut self, sink: F) {
+    pub fn on_tick_with<F: FnMut(Effect)>(&mut self, sink: F) {
         let started_at = Instant::now();
         let bindings_owned = self.get_compiled_stick_rules().cloned();
         self.axes_scratch.clear();
@@ -239,7 +203,7 @@ impl Gamacros {
     }
 
     /// Process repeat tasks due up to `now`.
-    pub fn process_due_repeats<F: FnMut(Action)>(
+    pub fn process_due_repeats<F: FnMut(Effect)>(
         &self,
         now: std::time::Instant,
         mut sink: F,
@@ -259,7 +223,7 @@ impl Gamacros {
     }
 
     /// Process button repeat tasks due up to `now`.
-    pub fn process_button_repeats<F: FnMut(Action)>(
+    pub fn process_button_repeats<F: FnMut(Effect)>(
         &mut self,
         now: Instant,
         sink: &mut F,
@@ -268,7 +232,7 @@ impl Gamacros {
         let mut fired = 0usize;
         for task in self.button_repeats.values_mut() {
             if now >= task.next_fire {
-                sink(Action::KeyTap(task.key.clone()));
+                sink(Effect::KeyTap(task.key.clone()));
                 fired += 1;
                 if !task.delay_done {
                     task.delay_done = true;
@@ -400,7 +364,7 @@ impl Gamacros {
         false
     }
 
-    pub fn on_button_with<F: FnMut(Action)>(
+    pub fn on_button_with<F: FnMut(Effect)>(
         &mut self,
         id: ControllerId,
         button: Button,
@@ -482,12 +446,12 @@ impl Gamacros {
                 ButtonPhase::Pressed => {
                     if let Some(ms) = rule.vibrate {
                         if rumble {
-                            sink(Action::Rumble { id, ms: ms as u32 });
+                            sink(Effect::Rumble { id, ms: ms as u32 });
                         }
                     }
                     match rule.action.clone() {
                         ButtonAction::Keystroke(k) => {
-                            sink(Action::KeyTap((*k).clone()));
+                            sink(Effect::KeyTap((*k).clone()));
                             let delay_ms = rule
                                 .repeat_delay_ms
                                 .unwrap_or(DEFAULT_REPEAT_DELAY_MS);
@@ -506,23 +470,23 @@ impl Gamacros {
                             );
                         }
                         ButtonAction::TapKeystroke(k) => {
-                            sink(Action::KeyTap((*k).clone()));
+                            sink(Effect::KeyTap((*k).clone()));
                         }
                         ButtonAction::Macros(m) => {
-                            sink(Action::Macros(m));
+                            sink(Effect::Macros(m));
                         }
                         ButtonAction::Shell(s) => {
                             print_debug!("shell command: {}", s);
-                            sink(Action::Shell(s));
+                            sink(Effect::Shell(s));
                         }
                         ButtonAction::MouseClick { button, click_type } => {
-                            sink(Action::MouseClick { button, click_type });
+                            sink(Effect::MouseClick { button, click_type });
                         }
                         ButtonAction::HoldClick(btn) => {
-                            sink(Action::MousePress { button: btn });
+                            sink(Effect::MousePress { button: btn });
                         }
                         ButtonAction::RawModifier(key) => {
-                            sink(Action::RawModifierPress(key));
+                            sink(Effect::RawModifierPress(key));
                         }
                     }
                 }
@@ -531,10 +495,10 @@ impl Gamacros {
                         self.button_repeats.remove(&(id, button));
                     }
                     ButtonAction::HoldClick(btn) => {
-                        sink(Action::MouseRelease { button: btn });
+                        sink(Effect::MouseRelease { button: btn });
                     }
                     ButtonAction::RawModifier(key) => {
-                        sink(Action::RawModifierRelease(key));
+                        sink(Effect::RawModifierRelease(key));
                     }
                     _ => {}
                 },

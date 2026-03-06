@@ -6,7 +6,7 @@ use gamacros_gamepad::ControllerManager;
 
 use gamacros_workspace::{MouseButton, MouseClickType};
 
-use crate::{app::Action, print_error, print_info};
+use crate::{app::Effect, print_error, print_info};
 
 const DEFAULT_SHELL: &str = "/bin/zsh";
 
@@ -25,30 +25,30 @@ impl<'a> ActionRunner<'a> {
         }
     }
 
-    pub fn run(&mut self, action: Action) {
-        match action {
-            Action::KeyTap(ref k) => {
+    pub fn run_effect(&mut self, effect: Effect) {
+        match effect {
+            Effect::KeyTap(ref k) => {
                 print_info!("ACTION: KeyTap combo={k:?}");
                 match self.keypress.perform(k) {
                     Ok(()) => print_info!("  KeyTap OK"),
                     Err(e) => print_error!("  KeyTap FAILED: {e:?}"),
                 }
             }
-            Action::KeyPress(ref k) => {
+            Effect::KeyPress(ref k) => {
                 print_info!("ACTION: KeyPress combo={k:?}");
                 match self.keypress.press(k) {
                     Ok(()) => print_info!("  KeyPress OK"),
                     Err(e) => print_error!("  KeyPress FAILED: {e:?}"),
                 }
             }
-            Action::KeyRelease(ref k) => {
+            Effect::KeyRelease(ref k) => {
                 print_info!("ACTION: KeyRelease combo={k:?}");
                 match self.keypress.release(k) {
                     Ok(()) => print_info!("  KeyRelease OK"),
                     Err(e) => print_error!("  KeyRelease FAILED: {e:?}"),
                 }
             }
-            Action::Macros(ref m) => {
+            Effect::Macros(ref m) => {
                 print_info!("ACTION: Macros ({} combos)", m.len());
                 for (i, k) in m.iter().enumerate() {
                     print_info!("  Macros[{i}] combo={k:?}");
@@ -58,11 +58,11 @@ impl<'a> ActionRunner<'a> {
                     }
                 }
             }
-            Action::Shell(ref s) => {
+            Effect::Shell(ref s) => {
                 print_info!("ACTION: Shell cmd={s}");
                 let _ = self.run_shell(s);
             }
-            Action::MouseClick { button, click_type } => {
+            Effect::MouseClick { button, click_type } => {
                 print_info!(
                     "ACTION: MouseClick button={button:?} click_type={click_type:?}"
                 );
@@ -82,7 +82,7 @@ impl<'a> ActionRunner<'a> {
                     Err(e) => print_error!("  MouseClick FAILED: {e:?}"),
                 }
             }
-            Action::MousePress { button } => {
+            Effect::MousePress { button } => {
                 print_info!("ACTION: MousePress button={button:?}");
                 let enigo_button = match button {
                     MouseButton::Left => enigo::Button::Left,
@@ -94,7 +94,7 @@ impl<'a> ActionRunner<'a> {
                     Err(e) => print_error!("  MousePress FAILED: {e:?}"),
                 }
             }
-            Action::MouseRelease { button } => {
+            Effect::MouseRelease { button } => {
                 print_info!("ACTION: MouseRelease button={button:?}");
                 let enigo_button = match button {
                     MouseButton::Left => enigo::Button::Left,
@@ -106,10 +106,10 @@ impl<'a> ActionRunner<'a> {
                     Err(e) => print_error!("  MouseRelease FAILED: {e:?}"),
                 }
             }
-            Action::MouseMove { dx, dy } => {
+            Effect::MouseMove { dx, dy } => {
                 let _ = self.keypress.mouse_move(dx, dy);
             }
-            Action::Scroll { h, v } => {
+            Effect::Scroll { h, v } => {
                 if h != 0 {
                     let _ = self.keypress.scroll_x(h);
                 }
@@ -117,14 +117,14 @@ impl<'a> ActionRunner<'a> {
                     let _ = self.keypress.scroll_y(v);
                 }
             }
-            Action::Rumble { id, ms } => {
+            Effect::Rumble { id, ms } => {
                 print_info!("ACTION: Rumble id={id} ms={ms}");
                 if let Some(h) = self.manager.controller(id) {
                     let _ = h.rumble(1.0, 1.0, Duration::from_millis(ms as u64));
                 }
             }
             #[cfg(target_os = "macos")]
-            Action::RawModifierPress(key) => {
+            Effect::RawModifierPress(key) => {
                 let keycode = key.keycode();
                 print_info!(
                     "ACTION: RawModifierPress key={key:?} keycode=0x{keycode:02x}"
@@ -135,7 +135,7 @@ impl<'a> ActionRunner<'a> {
                 }
             }
             #[cfg(target_os = "macos")]
-            Action::RawModifierRelease(key) => {
+            Effect::RawModifierRelease(key) => {
                 let keycode = key.keycode();
                 print_info!(
                     "ACTION: RawModifierRelease key={key:?} keycode=0x{keycode:02x}"
@@ -146,7 +146,7 @@ impl<'a> ActionRunner<'a> {
                 }
             }
             #[cfg(not(target_os = "macos"))]
-            Action::RawModifierPress(_) | Action::RawModifierRelease(_) => {
+            Effect::RawModifierPress(_) | Effect::RawModifierRelease(_) => {
                 print_error!("ACTION: RawModifier not supported on this platform");
             }
         }

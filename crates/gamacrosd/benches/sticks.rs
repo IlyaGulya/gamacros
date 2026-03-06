@@ -3,7 +3,7 @@ use gamacros_gamepad::{Axis as CtrlAxis, ControllerId, ControllerInfo};
 use gamacros_workspace::{
     AppRules, Profile, StickMode, StickRules, ArrowsParams, StickSide,
 };
-use gamacrosd::app::{Action, Gamacros};
+use gamacrosd::app::{Effect, Gamacros};
 
 fn build_profile_arrows() -> Profile {
     let mut rules = gamacros_workspace::RuleMap::default();
@@ -57,14 +57,14 @@ pub fn bench_sticks_arrows(c: &mut Criterion) {
                 g.on_tick_with(|a| {
                     {
                         match a {
-                            Action::KeyTap(_)
-                            | Action::MouseMove { .. }
-                            | Action::Scroll { .. }
-                            | Action::KeyPress(_)
-                            | Action::KeyRelease(_)
-                            | Action::Rumble { .. }
-                            | Action::Shell(_)
-                            | Action::Macros(_) => {
+                            Effect::KeyTap(_)
+                            | Effect::MouseMove { .. }
+                            | Effect::Scroll { .. }
+                            | Effect::KeyPress(_)
+                            | Effect::KeyRelease(_)
+                            | Effect::Rumble { .. }
+                            | Effect::Shell(_)
+                            | Effect::Macros(_) => {
                                 n += 1;
                             }
                         };

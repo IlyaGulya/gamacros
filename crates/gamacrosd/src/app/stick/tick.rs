@@ -2,7 +2,7 @@ use colored::Colorize;
 use gamacros_gamepad::ControllerId;
 use gamacros_workspace::{Axis as ProfileAxis, StickMode, StickSide};
 
-use crate::app::gamacros::Action;
+use crate::app::Effect;
 use crate::print_debug;
 
 use super::compiled::CompiledStickRules;
@@ -13,7 +13,7 @@ use super::util::{
 };
 
 impl StickProcessor {
-    pub fn on_tick_with<F: FnMut(Action)>(
+    pub fn on_tick_with<F: FnMut(Effect)>(
         &mut self,
         bindings: Option<&CompiledStickRules>,
         axes_list: &[(ControllerId, [f32; 6])],
@@ -119,7 +119,7 @@ impl StickProcessor {
     fn tick_arrows(
         &mut self,
         now: std::time::Instant,
-        sink: &mut impl FnMut(Action),
+        sink: &mut impl FnMut(Effect),
         axes_list: &[(ControllerId, [f32; 6])],
         bindings: &CompiledStickRules,
     ) {
@@ -196,7 +196,7 @@ impl StickProcessor {
     fn tick_stepper(
         &mut self,
         now: std::time::Instant,
-        sink: &mut impl FnMut(Action),
+        sink: &mut impl FnMut(Effect),
         axes_list: &[(ControllerId, [f32; 6])],
         bindings: &CompiledStickRules,
         mode: StepperMode,
@@ -300,7 +300,7 @@ impl StickProcessor {
     fn tick_mouse(
         &mut self,
         dt_s: f32,
-        sink: &mut impl FnMut(Action),
+        sink: &mut impl FnMut(Effect),
         axes_list: &[(ControllerId, [f32; 6])],
         bindings: &CompiledStickRules,
     ) {
@@ -337,7 +337,7 @@ impl StickProcessor {
                                 "stick mouse: controller={_cid} side=Left raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag={mag:.3} speed_px_s={speed_px_s:.1} move=({dx},{dy}) accum=({:.3},{:.3})"
                                 ,accum.0,accum.1
                             );
-                            (sink)(Action::MouseMove { dx, dy });
+                            (sink)(Effect::MouseMove { dx, dy });
                             accum.0 -= dx as f32;
                             accum.1 -= dy as f32;
                         }
@@ -379,7 +379,7 @@ impl StickProcessor {
                                 "stick mouse: controller={_cid} side=Right raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag={mag:.3} speed_px_s={speed_px_s:.1} move=({dx},{dy}) accum=({:.3},{:.3})"
                                 ,accum.0,accum.1
                             );
-                            (sink)(Action::MouseMove { dx, dy });
+                            (sink)(Effect::MouseMove { dx, dy });
                             accum.0 -= dx as f32;
                             accum.1 -= dy as f32;
                         }
@@ -419,7 +419,7 @@ impl StickProcessor {
     fn tick_scroll(
         &mut self,
         dt_s: f32,
-        sink: &mut impl FnMut(Action),
+        sink: &mut impl FnMut(Effect),
         axes_list: &[(ControllerId, [f32; 6])],
         bindings: &CompiledStickRules,
     ) {
@@ -447,7 +447,7 @@ impl StickProcessor {
                             accum.0,
                             accum.1
                         );
-                        (sink)(Action::Scroll { h, v: 0 });
+                        (sink)(Effect::Scroll { h, v: 0 });
                         accum.0 -= h as f32;
                     }
                     if v != 0 {
@@ -456,7 +456,7 @@ impl StickProcessor {
                             accum.0,
                             accum.1
                         );
-                        (sink)(Action::Scroll { h: 0, v });
+                        (sink)(Effect::Scroll { h: 0, v });
                         accum.1 -= v as f32;
                     }
                 }
@@ -484,7 +484,7 @@ impl StickProcessor {
                             accum.0,
                             accum.1
                         );
-                        (sink)(Action::Scroll { h, v: 0 });
+                        (sink)(Effect::Scroll { h, v: 0 });
                         accum.0 -= h as f32;
                     }
                     if v != 0 {
@@ -493,7 +493,7 @@ impl StickProcessor {
                             accum.0,
                             accum.1
                         );
-                        (sink)(Action::Scroll { h: 0, v });
+                        (sink)(Effect::Scroll { h: 0, v });
                         accum.1 -= v as f32;
                     }
                 }

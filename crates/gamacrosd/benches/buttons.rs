@@ -2,7 +2,7 @@ use codspeed_criterion_compat::{black_box, criterion_group, criterion_main, Crit
 use gamacros_control::KeyCombo;
 use gamacros_gamepad::{Button, ControllerId, ControllerInfo};
 use gamacros_workspace::{AppRules, ButtonAction, ButtonRule, Profile, StickRules};
-use gamacrosd::app::{Action, Gamacros};
+use gamacrosd::app::{Effect, Gamacros};
 use std::sync::Arc;
 
 fn build_profile_simple(button: Button, combo: KeyCombo) -> Profile {
@@ -56,14 +56,14 @@ pub fn bench_button_path(c: &mut Criterion) {
                 gamacrosd::app::ButtonPhase::Pressed,
                 |a| {
                     match a {
-                        Action::KeyPress(_)
-                        | Action::Rumble { .. }
-                        | Action::Shell(_)
-                        | Action::Macros(_)
-                        | Action::MouseMove { .. }
-                        | Action::Scroll { .. }
-                        | Action::KeyTap(_)
-                        | Action::KeyRelease(_) => {
+                        Effect::KeyPress(_)
+                        | Effect::Rumble { .. }
+                        | Effect::Shell(_)
+                        | Effect::Macros(_)
+                        | Effect::MouseMove { .. }
+                        | Effect::Scroll { .. }
+                        | Effect::KeyTap(_)
+                        | Effect::KeyRelease(_) => {
                             sink_count += 1;
                         }
                     };
@@ -76,14 +76,14 @@ pub fn bench_button_path(c: &mut Criterion) {
                 gamacrosd::app::ButtonPhase::Released,
                 |a| {
                     match a {
-                        Action::KeyPress(_)
-                        | Action::Rumble { .. }
-                        | Action::Shell(_)
-                        | Action::Macros(_)
-                        | Action::MouseMove { .. }
-                        | Action::Scroll { .. }
-                        | Action::KeyTap(_)
-                        | Action::KeyRelease(_) => {
+                        Effect::KeyPress(_)
+                        | Effect::Rumble { .. }
+                        | Effect::Shell(_)
+                        | Effect::Macros(_)
+                        | Effect::MouseMove { .. }
+                        | Effect::Scroll { .. }
+                        | Effect::KeyTap(_)
+                        | Effect::KeyRelease(_) => {
                             sink_count += 1;
                         }
                     };

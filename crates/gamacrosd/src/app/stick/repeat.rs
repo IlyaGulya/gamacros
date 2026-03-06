@@ -7,7 +7,7 @@ use gamacros_control::Key;
 use gamacros_gamepad::ControllerId;
 use gamacros_workspace::{Axis as ProfileAxis, StickSide};
 
-use crate::app::gamacros::Action;
+use crate::app::Effect;
 use crate::print_debug;
 
 use super::util::{side_index};
@@ -128,13 +128,13 @@ impl StickProcessor {
         &mut self,
         reg: RepeatReg,
         now: std::time::Instant,
-    ) -> Option<Action> {
+    ) -> Option<Effect> {
         let cid = reg.id.controller;
         let side_idx = side_index(&reg.id.side);
         // Precompute a fresh seq; consume it only when needed.
         let seq_new = self.next_seq();
 
-        let mut action: Option<Action> = None;
+        let mut action: Option<Effect> = None;
         let mut schedule_next: Option<(RepeatTaskId, u64, std::time::Instant)> =
             None;
 
@@ -198,7 +198,7 @@ impl StickProcessor {
                     };
                     *slot = Some(st);
                     if reg.fire_on_activate {
-                        action = Some(Action::KeyTap(
+                        action = Some(Effect::KeyTap(
                             gamacros_control::KeyCombo::from_key(reg.key),
                         ));
                     }
@@ -246,7 +246,7 @@ impl StickProcessor {
     pub fn process_due_repeats(
         &mut self,
         now: Instant,
-        sink: &mut impl FnMut(Action),
+        sink: &mut impl FnMut(Effect),
     ) {
         loop {
             let entry = match self.schedule.peek() {
@@ -271,7 +271,7 @@ impl StickProcessor {
                                 entry.seq,
                                 st.key
                             );
-                            (sink)(Action::KeyTap(
+                            (sink)(Effect::KeyTap(
                                 gamacros_control::KeyCombo::from_key(st.key),
                             ));
                             st.last_fire = now;

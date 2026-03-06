@@ -243,7 +243,7 @@ fn handle_domain_event(
                     button,
                     ButtonPhase::Pressed,
                     |action| {
-                        action_runner.run(action);
+                        action_runner.run_effect(action);
                     },
                 );
                 wake_state.need_reschedule = true;
@@ -254,7 +254,7 @@ fn handle_domain_event(
                     button,
                     ButtonPhase::Released,
                     |action| {
-                        action_runner.run(action);
+                        action_runner.run_effect(action);
                     },
                 );
                 wake_state.need_reschedule = true;
@@ -300,15 +300,17 @@ fn handle_domain_event(
         DomainEvent::Api(command) => match command {
             ApiCommand::Rumble { id, ms } => match id {
                 Some(controller_id) => {
-                    action_runner.run(crate::app::Action::Rumble {
+                    action_runner.run_effect(crate::app::Effect::Rumble {
                         id: controller_id,
                         ms,
                     });
                 }
                 None => {
                     for info in manager.controllers() {
-                        action_runner
-                            .run(crate::app::Action::Rumble { id: info.id, ms });
+                        action_runner.run_effect(crate::app::Effect::Rumble {
+                            id: info.id,
+                            ms,
+                        });
                     }
                 }
             },
@@ -328,7 +330,7 @@ fn handle_domain_event(
                         now.duration_since(due).as_micros()
                     );
                     gamacros.on_tick_with(|action| {
-                        action_runner.run(action);
+                        action_runner.run_effect(action);
                     });
                     if gamacros.wants_fast_tick() {
                         wake_state.fast_mode = true;
@@ -345,7 +347,7 @@ fn handle_domain_event(
             }
             let repeats_started_at = std::time::Instant::now();
             gamacros.process_due_repeats(now, |action| {
-                action_runner.run(action);
+                action_runner.run_effect(action);
             });
             print_debug!(
                 "wake timer: stick repeats elapsed_us={}",
@@ -353,7 +355,7 @@ fn handle_domain_event(
             );
             let button_repeats_started_at = std::time::Instant::now();
             gamacros.process_button_repeats(now, &mut |action| {
-                action_runner.run(action);
+                action_runner.run_effect(action);
             });
             print_debug!(
                 "wake timer: button repeats elapsed_us={}",
