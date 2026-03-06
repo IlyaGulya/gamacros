@@ -39,7 +39,7 @@ notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
 
 # Gamepad bindings
-sdl2 = "0.37"
+sdl2 = { version = "0.38", features = ["bundled"] }
 
 # Keyboard bindings
 enigo = "0.6.0"

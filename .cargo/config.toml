@@ -1,3 +1,7 @@
+[env]
+# sdl2-sys 0.37 bundles an old SDL2 CMakeLists.txt incompatible with CMake 4.x
+CMAKE_POLICY_VERSION_MINIMUM = "3.5"
+
 [target.aarch64-apple-darwin]
 rustflags = [
   "-C", "link-arg=-Wl,-dead_strip",
