@@ -158,6 +158,16 @@ impl Performer {
         self.enigo.button(button, Direction::Click)
     }
 
+    /// Press a mouse button (hold down).
+    pub fn mouse_press(&mut self, button: Button) -> InputResult<()> {
+        self.enigo.button(button, Direction::Press)
+    }
+
+    /// Release a mouse button.
+    pub fn mouse_release(&mut self, button: Button) -> InputResult<()> {
+        self.enigo.button(button, Direction::Release)
+    }
+
     /// Send a raw modifier key press via FlagsChanged CGEvent (macOS only).
     /// This is the correct event type for modifier keys — apps like Freeflow
     /// and SuperWhisper that listen for modifier-only keypresses need this.

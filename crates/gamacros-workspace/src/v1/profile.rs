@@ -42,6 +42,8 @@ pub(crate) struct ProfileV1ButtonRule {
     #[serde(default)]
     pub click: Option<String>,
     #[serde(default)]
+    pub hold_click: Option<String>,
+    #[serde(default)]
     pub rawkey: Option<String>,
     #[serde(default)]
     pub repeat_delay_ms: Option<u64>,

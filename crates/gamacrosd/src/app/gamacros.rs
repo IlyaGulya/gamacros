@@ -25,6 +25,8 @@ pub enum Action {
     Macros(Arc<Macros>),
     Shell(String),
     MouseClick { button: MouseButton, click_type: MouseClickType },
+    MousePress { button: MouseButton },
+    MouseRelease { button: MouseButton },
     MouseMove { dx: i32, dy: i32 },
     Scroll { h: i32, v: i32 },
     Rumble { id: ControllerId, ms: u32 },
@@ -417,6 +419,9 @@ impl Gamacros {
                         ButtonAction::MouseClick { button, click_type } => {
                             sink(Action::MouseClick { button, click_type });
                         }
+                        ButtonAction::HoldClick(btn) => {
+                            sink(Action::MousePress { button: btn });
+                        }
                         ButtonAction::RawModifier(key) => {
                             sink(Action::RawModifierPress(key));
                         }
@@ -426,6 +431,9 @@ impl Gamacros {
                     match rule.action.clone() {
                         ButtonAction::Keystroke(_) => {
                             self.button_repeats.remove(&(id, button));
+                        }
+                        ButtonAction::HoldClick(btn) => {
+                            sink(Action::MouseRelease { button: btn });
                         }
                         ButtonAction::RawModifier(key) => {
                             sink(Action::RawModifierRelease(key));

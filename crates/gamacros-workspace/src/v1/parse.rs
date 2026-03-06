@@ -183,25 +183,29 @@ fn parse_button_rule(
     raw: ProfileV1ButtonRule,
     target_name: &str,
 ) -> Result<ButtonRule, Error> {
-    let action = match (raw.keystroke, raw.tap, raw.macros, raw.shell, raw.click, raw.rawkey) {
-        (Some(keystroke), None, None, None, None, None) => {
+    let action = match (raw.keystroke, raw.tap, raw.macros, raw.shell, raw.click, raw.hold_click, raw.rawkey) {
+        (Some(keystroke), None, None, None, None, None, None) => {
             let keystroke = parse_keystroke(&keystroke)?;
             ButtonAction::Keystroke(Arc::new(keystroke))
         }
-        (None, Some(tap), None, None, None, None) => {
+        (None, Some(tap), None, None, None, None, None) => {
             let keystroke = parse_keystroke(&tap)?;
             ButtonAction::TapKeystroke(Arc::new(keystroke))
         }
-        (None, None, Some(macros), None, None, None) => {
+        (None, None, Some(macros), None, None, None, None) => {
             let macros = parse_macros(&macros)?;
             ButtonAction::Macros(Arc::new(macros))
         }
-        (None, None, None, Some(shell), None, None) => ButtonAction::Shell(shell),
-        (None, None, None, None, Some(click), None) => {
+        (None, None, None, Some(shell), None, None, None) => ButtonAction::Shell(shell),
+        (None, None, None, None, Some(click), None, None) => {
             let (button, click_type) = parse_click_spec(&click, target_name)?;
             ButtonAction::MouseClick { button, click_type }
         }
-        (None, None, None, None, None, Some(rawkey)) => {
+        (None, None, None, None, None, Some(hold), None) => {
+            let button = parse_mouse_button(&hold, target_name)?;
+            ButtonAction::HoldClick(button)
+        }
+        (None, None, None, None, None, None, Some(rawkey)) => {
             let modifier = parse_raw_modifier(&rawkey, target_name)?;
             ButtonAction::RawModifier(modifier)
         }
@@ -229,6 +233,20 @@ fn parse_click_spec(
         "middle_double" => Ok((MouseButton::Middle, MouseClickType::DoubleClick)),
         _ => Err(Error::InvalidActions(format!(
             "{target_name}: unknown click type '{spec}'"
+        ))),
+    }
+}
+
+fn parse_mouse_button(
+    spec: &str,
+    target_name: &str,
+) -> Result<MouseButton, Error> {
+    match spec {
+        "left" => Ok(MouseButton::Left),
+        "right" => Ok(MouseButton::Right),
+        "middle" => Ok(MouseButton::Middle),
+        _ => Err(Error::InvalidActions(format!(
+            "{target_name}: unknown mouse button '{spec}'. Use: left, right, middle"
         ))),
     }
 }

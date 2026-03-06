@@ -122,6 +122,8 @@ pub enum ButtonAction {
     Macros(Arc<Macros>),
     Shell(String),
     MouseClick { button: MouseButton, click_type: MouseClickType },
+    /// Hold: press mouse button on gamepad down, release on gamepad up. For drag operations.
+    HoldClick(MouseButton),
     /// Send a raw modifier key as a FlagsChanged CGEvent (macOS).
     /// This is needed for apps that listen for modifier-only keypresses.
     RawModifier(RawModifierKey),

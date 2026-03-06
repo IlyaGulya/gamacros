@@ -78,6 +78,30 @@ impl<'a> ActionRunner<'a> {
                     Err(e) => print_error!("  MouseClick FAILED: {e:?}"),
                 }
             }
+            Action::MousePress { button } => {
+                print_info!("ACTION: MousePress button={button:?}");
+                let enigo_button = match button {
+                    MouseButton::Left => enigo::Button::Left,
+                    MouseButton::Right => enigo::Button::Right,
+                    MouseButton::Middle => enigo::Button::Middle,
+                };
+                match self.keypress.mouse_press(enigo_button) {
+                    Ok(()) => print_info!("  MousePress OK"),
+                    Err(e) => print_error!("  MousePress FAILED: {e:?}"),
+                }
+            }
+            Action::MouseRelease { button } => {
+                print_info!("ACTION: MouseRelease button={button:?}");
+                let enigo_button = match button {
+                    MouseButton::Left => enigo::Button::Left,
+                    MouseButton::Right => enigo::Button::Right,
+                    MouseButton::Middle => enigo::Button::Middle,
+                };
+                match self.keypress.mouse_release(enigo_button) {
+                    Ok(()) => print_info!("  MouseRelease OK"),
+                    Err(e) => print_error!("  MouseRelease FAILED: {e:?}"),
+                }
+            }
             Action::MouseMove { dx, dy } => {
                 let _ = self.keypress.mouse_move(dx, dy);
             }
