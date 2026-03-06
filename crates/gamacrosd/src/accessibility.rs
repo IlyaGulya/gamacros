@@ -1,4 +1,5 @@
 use std::ffi::c_void;
+use std::ptr;
 
 use crate::print_info;
 
@@ -27,38 +28,54 @@ extern "C" {
     static kAXTrustedCheckOptionPrompt: *const c_void;
 }
 
-/// Check if the process has Accessibility permissions.
-/// If `prompt` is true and permissions are missing, macOS will show the system dialog.
-pub fn ensure_accessibility(prompt: bool) -> bool {
+fn accessibility_options(prompt: bool) -> *const c_void {
+    if !prompt {
+        return ptr::null();
+    }
+
     unsafe {
         let keys = [kAXTrustedCheckOptionPrompt];
-        let values = [if prompt {
-            kCFBooleanTrue
-        } else {
-            // kCFBooleanFalse — just use null-ish; but easier to just always prompt
-            kCFBooleanTrue
-        }];
-
-        let options = CFDictionaryCreate(
-            std::ptr::null(),
+        let values = [kCFBooleanTrue];
+        CFDictionaryCreate(
+            ptr::null(),
             keys.as_ptr(),
             values.as_ptr(),
             1,
-            &kCFTypeDictionaryKeyCallBacks as *const _ as *const c_void,
-            &kCFTypeDictionaryValueCallBacks as *const _ as *const c_void,
-        );
+            &kCFTypeDictionaryKeyCallBacks as *const _,
+            &kCFTypeDictionaryValueCallBacks as *const _,
+        )
+    }
+}
 
+fn check_accessibility(prompt: bool) -> bool {
+    unsafe {
+        let options = accessibility_options(prompt);
         let trusted = AXIsProcessTrustedWithOptions(options);
-        CFRelease(options);
-
-        if !trusted {
-            print_info!(
-                "Accessibility permission required. \
-                 Please enable gamacrosd in System Settings → Privacy & Security → Accessibility, \
-                 then restart."
-            );
+        if !options.is_null() {
+            CFRelease(options);
         }
-
         trusted
     }
+}
+
+pub fn is_trusted() -> bool {
+    check_accessibility(false)
+}
+
+pub fn request_if_needed() -> bool {
+    let trusted = check_accessibility(true);
+    if !trusted {
+        print_info!(
+            "Accessibility permission required. \
+             Please enable gamacrosd in System Settings -> Privacy & Security -> Accessibility."
+        );
+    }
+    trusted
+}
+
+pub fn log_missing_permission() {
+    print_info!(
+        "Accessibility permission required. \
+         Waiting for gamacrosd to be allowed in System Settings -> Privacy & Security -> Accessibility."
+    );
 }

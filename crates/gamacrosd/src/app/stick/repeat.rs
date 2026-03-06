@@ -1,4 +1,5 @@
 use ahash::AHashMap;
+use colored::Colorize;
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 use std::time::Instant;
@@ -7,6 +8,7 @@ use gamacros_gamepad::ControllerId;
 use gamacros_workspace::{Axis as ProfileAxis, StickSide};
 
 use crate::app::gamacros::Action;
+use crate::print_debug;
 
 use super::util::{side_index};
 
@@ -25,6 +27,7 @@ pub(crate) struct StickProcessor {
     pub(super) regs: Vec<RepeatReg>,
     schedule: BinaryHeap<SchedEntry>,
     seq_counter: u64,
+    pub(super) last_tick_at: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -34,6 +37,8 @@ pub(super) struct ControllerRepeatState {
 
 #[derive(Default)]
 pub(super) struct SideRepeatState {
+    pub(super) mouse_filtered: (f32, f32),
+    pub(super) mouse_accum: (f32, f32),
     pub(super) scroll_accum: (f32, f32),
     pub(super) arrows: [Option<RepeatTaskState>; 4],
     pub(super) volume: [Option<RepeatTaskState>; 4],
@@ -214,6 +219,13 @@ impl StickProcessor {
         }
 
         if let Some((id, seq, due)) = schedule_next {
+            print_debug!(
+                "stick repeat schedule: controller={} side={:?} kind={:?} seq={seq} due_in_ms={}",
+                id.controller,
+                id.side,
+                id.kind,
+                due.saturating_duration_since(now).as_millis()
+            );
             self.push_due(id, seq, due);
         }
 
@@ -251,6 +263,14 @@ impl StickProcessor {
                 if let Some(slot) = self.slot_for_mut(&entry.id) {
                     if let Some(st) = slot.as_mut() {
                         if st.seq == entry.seq {
+                            print_debug!(
+                                "stick repeat fire: controller={} side={:?} kind={:?} seq={} key={:?}",
+                                entry.id.controller,
+                                entry.id.side,
+                                entry.id.kind,
+                                entry.seq,
+                                st.key
+                            );
                             (sink)(Action::KeyTap(
                                 gamacros_control::KeyCombo::from_key(st.key),
                             ));
@@ -264,6 +284,13 @@ impl StickProcessor {
                 }
             }
             if let Some((id, seq, due)) = schedule_next {
+                print_debug!(
+                    "stick repeat reschedule: controller={} side={:?} kind={:?} seq={seq} due_in_ms={}",
+                    id.controller,
+                    id.side,
+                    id.kind,
+                    due.saturating_duration_since(now).as_millis()
+                );
                 self.push_due(id, seq, due);
             }
         }
@@ -271,11 +298,14 @@ impl StickProcessor {
 
     pub(super) fn repeater_cleanup_inactive(&mut self) {
         let gen = self.generation;
-        for (_cid, ctrl) in self.controllers.iter_mut() {
+        for (cid, ctrl) in self.controllers.iter_mut() {
             for side in ctrl.sides.iter_mut() {
                 for slot in side.arrows.iter_mut() {
                     if let Some(st) = slot.as_ref() {
                         if st.last_seen_generation != gen {
+                            print_debug!(
+                                "stick repeat cleanup: controller={cid} repeat_slot=Arrow"
+                            );
                             *slot = None;
                         }
                     }
@@ -283,6 +313,9 @@ impl StickProcessor {
                 for slot in side.volume.iter_mut() {
                     if let Some(st) = slot.as_ref() {
                         if st.last_seen_generation != gen {
+                            print_debug!(
+                                "stick repeat cleanup: controller={cid} repeat_slot=Volume"
+                            );
                             *slot = None;
                         }
                     }
@@ -290,6 +323,9 @@ impl StickProcessor {
                 for slot in side.brightness.iter_mut() {
                     if let Some(st) = slot.as_ref() {
                         if st.last_seen_generation != gen {
+                            print_debug!(
+                                "stick repeat cleanup: controller={cid} repeat_slot=Brightness"
+                            );
                             *slot = None;
                         }
                     }

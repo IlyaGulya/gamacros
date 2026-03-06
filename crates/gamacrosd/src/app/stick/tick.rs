@@ -1,7 +1,9 @@
+use colored::Colorize;
 use gamacros_gamepad::ControllerId;
 use gamacros_workspace::{Axis as ProfileAxis, StickMode, StickSide};
 
 use crate::app::gamacros::Action;
+use crate::print_debug;
 
 use super::compiled::CompiledStickRules;
 use super::repeat::{Direction, RepeatKind, RepeatTaskId, RepeatReg, StickProcessor};
@@ -25,7 +27,17 @@ impl StickProcessor {
         };
 
         let now = std::time::Instant::now();
+        let started_at = now;
+        let dt_s = self.tick_dt_s(now);
         self.generation = self.generation.wrapping_add(1);
+        print_debug!(
+            "stick processor tick: generation={} controllers={} has_repeats={} dt_s={dt_s:.4} left_mode={:?} right_mode={:?}",
+            self.generation,
+            axes_list.len(),
+            self.has_active_repeats(),
+            bindings.left(),
+            bindings.right()
+        );
 
         if matches!(bindings.left(), Some(StickMode::Arrows(_)))
             || matches!(bindings.right(), Some(StickMode::Arrows(_)))
@@ -57,16 +69,37 @@ impl StickProcessor {
         if matches!(bindings.left(), Some(StickMode::MouseMove(_)))
             || matches!(bindings.right(), Some(StickMode::MouseMove(_)))
         {
-            self.tick_mouse(&mut sink, axes_list, bindings);
+            self.tick_mouse(dt_s, &mut sink, axes_list, bindings);
         }
         if matches!(bindings.left(), Some(StickMode::Scroll(_)))
             || matches!(bindings.right(), Some(StickMode::Scroll(_)))
         {
-            self.tick_scroll(&mut sink, axes_list, bindings);
+            self.tick_scroll(dt_s, &mut sink, axes_list, bindings);
         }
 
         // Repeat draining is now event-driven, cleanup still needs to run per generation
         self.repeater_cleanup_inactive();
+        print_debug!(
+            "stick processor tick done: generation={} elapsed_us={}",
+            self.generation,
+            started_at.elapsed().as_micros()
+        );
+    }
+
+    fn tick_dt_s(&mut self, now: std::time::Instant) -> f32 {
+        const DEFAULT_DT_S: f32 = 0.010;
+        const MIN_DT_S: f32 = 0.005;
+        const MAX_DT_S: f32 = 0.050;
+
+        let dt_s = self
+            .last_tick_at
+            .map(|last_tick_at| {
+                now.saturating_duration_since(last_tick_at).as_secs_f32()
+            })
+            .unwrap_or(DEFAULT_DT_S)
+            .clamp(MIN_DT_S, MAX_DT_S);
+        self.last_tick_at = Some(now);
+        dt_s
     }
 
     pub fn has_active_repeats(&self) -> bool {
@@ -103,6 +136,9 @@ impl StickProcessor {
                 } else {
                     Self::quantize_direction(x, y)
                 };
+                print_debug!(
+                    "stick arrows: controller={id} side=Left raw=({x0:.3},{y0:.3}) adjusted=({x:.3},{y:.3}) mag2={mag2:.3} dead2={dead2:.3} dir={new_dir:?}"
+                );
                 if let Some(dir) = new_dir {
                     let task_id = RepeatTaskId {
                         controller: id,
@@ -129,6 +165,9 @@ impl StickProcessor {
                 } else {
                     Self::quantize_direction(x, y)
                 };
+                print_debug!(
+                    "stick arrows: controller={id} side=Right raw=({x0:.3},{y0:.3}) adjusted=({x:.3},{y:.3}) mag2={mag2:.3} dead2={dead2:.3} dir={new_dir:?}"
+                );
                 if let Some(dir) = new_dir {
                     let task_id = RepeatTaskId {
                         controller: id,
@@ -200,6 +239,11 @@ impl StickProcessor {
                         initial_delay_ms: 0,
                         interval_ms: interval_ms as u64,
                     });
+                    print_debug!(
+                        "stick stepper: controller={cid} side=Left mode={mode:?} axis={:?} value={v:.3} mag={mag:.3} interval_ms={} positive={positive}",
+                        step_params.axis,
+                        interval_ms as u64
+                    );
                 }
             }
             if let Some(step_params) = match (&mode, bindings.right()) {
@@ -237,6 +281,11 @@ impl StickProcessor {
                         initial_delay_ms: 0,
                         interval_ms: interval_ms as u64,
                     });
+                    print_debug!(
+                        "stick stepper: controller={cid} side=Right mode={mode:?} axis={:?} value={v:.3} mag={mag:.3} interval_ms={} positive={positive}",
+                        step_params.axis,
+                        interval_ms as u64
+                    );
                 }
             }
         }
@@ -250,14 +299,26 @@ impl StickProcessor {
 
     fn tick_mouse(
         &mut self,
+        dt_s: f32,
         sink: &mut impl FnMut(Action),
         axes_list: &[(ControllerId, [f32; 6])],
         bindings: &CompiledStickRules,
     ) {
         for (_cid, axes) in axes_list.iter().cloned() {
             if let Some(StickMode::MouseMove(params)) = bindings.left() {
+                let alpha = Self::mouse_smoothing_alpha(
+                    dt_s,
+                    params.runtime.smoothing_window_ms,
+                );
                 let (x0, y0) = axes_for_side(axes, &StickSide::Left);
-                let (x, y) = invert_xy(x0, y0, params.invert_x, params.invert_y);
+                let sidx = super::util::side_index(&StickSide::Left);
+                let side =
+                    &mut self.controllers.entry(_cid).or_default().sides[sidx];
+                let (raw_x, raw_y) =
+                    invert_xy(x0, y0, params.invert_x, params.invert_y);
+                side.mouse_filtered.0 += alpha * (raw_x - side.mouse_filtered.0);
+                side.mouse_filtered.1 += alpha * (raw_y - side.mouse_filtered.1);
+                let (x, y) = side.mouse_filtered;
                 let mag_raw = magnitude2d(x, y);
                 if mag_raw >= params.deadzone {
                     let base = normalize_after_deadzone(mag_raw, params.deadzone);
@@ -266,18 +327,40 @@ impl StickProcessor {
                         let dir_x = x / mag_raw;
                         let dir_y = y / mag_raw;
                         let speed_px_s = params.max_speed_px_s * mag;
-                        let dt_s = 0.010;
-                        let dx = (speed_px_s * dir_x * dt_s).round() as i32;
-                        let dy = (speed_px_s * dir_y * dt_s).round() as i32;
+                        let accum = &mut side.mouse_accum;
+                        accum.0 += speed_px_s * dir_x * dt_s;
+                        accum.1 += speed_px_s * dir_y * dt_s;
+                        let dx = accum.0.trunc() as i32;
+                        let dy = accum.1.trunc() as i32;
                         if dx != 0 || dy != 0 {
+                            print_debug!(
+                                "stick mouse: controller={_cid} side=Left raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag={mag:.3} speed_px_s={speed_px_s:.1} move=({dx},{dy}) accum=({:.3},{:.3})"
+                                ,accum.0,accum.1
+                            );
                             (sink)(Action::MouseMove { dx, dy });
+                            accum.0 -= dx as f32;
+                            accum.1 -= dy as f32;
                         }
                     }
+                } else {
+                    side.mouse_filtered = (0.0, 0.0);
+                    side.mouse_accum = (0.0, 0.0);
                 }
             }
             if let Some(StickMode::MouseMove(params)) = bindings.right() {
+                let alpha = Self::mouse_smoothing_alpha(
+                    dt_s,
+                    params.runtime.smoothing_window_ms,
+                );
                 let (x0, y0) = axes_for_side(axes, &StickSide::Right);
-                let (x, y) = invert_xy(x0, y0, params.invert_x, params.invert_y);
+                let sidx = super::util::side_index(&StickSide::Right);
+                let side =
+                    &mut self.controllers.entry(_cid).or_default().sides[sidx];
+                let (raw_x, raw_y) =
+                    invert_xy(x0, y0, params.invert_x, params.invert_y);
+                side.mouse_filtered.0 += alpha * (raw_x - side.mouse_filtered.0);
+                side.mouse_filtered.1 += alpha * (raw_y - side.mouse_filtered.1);
+                let (x, y) = side.mouse_filtered;
                 let mag_raw = magnitude2d(x, y);
                 if mag_raw >= params.deadzone {
                     let base = normalize_after_deadzone(mag_raw, params.deadzone);
@@ -286,16 +369,33 @@ impl StickProcessor {
                         let dir_x = x / mag_raw;
                         let dir_y = y / mag_raw;
                         let speed_px_s = params.max_speed_px_s * mag;
-                        let dt_s = 0.010;
-                        let dx = (speed_px_s * dir_x * dt_s).round() as i32;
-                        let dy = (speed_px_s * dir_y * dt_s).round() as i32;
+                        let accum = &mut side.mouse_accum;
+                        accum.0 += speed_px_s * dir_x * dt_s;
+                        accum.1 += speed_px_s * dir_y * dt_s;
+                        let dx = accum.0.trunc() as i32;
+                        let dy = accum.1.trunc() as i32;
                         if dx != 0 || dy != 0 {
+                            print_debug!(
+                                "stick mouse: controller={_cid} side=Right raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag={mag:.3} speed_px_s={speed_px_s:.1} move=({dx},{dy}) accum=({:.3},{:.3})"
+                                ,accum.0,accum.1
+                            );
                             (sink)(Action::MouseMove { dx, dy });
+                            accum.0 -= dx as f32;
+                            accum.1 -= dy as f32;
                         }
                     }
+                } else {
+                    side.mouse_filtered = (0.0, 0.0);
+                    side.mouse_accum = (0.0, 0.0);
                 }
             }
         }
+    }
+
+    #[inline]
+    fn mouse_smoothing_alpha(dt_s: f32, smoothing_window_ms: u64) -> f32 {
+        let window_s = (smoothing_window_ms as f32 / 1000.0).max(0.001);
+        (dt_s / window_s).clamp(0.18, 0.55)
     }
 
     #[inline]
@@ -318,6 +418,7 @@ impl StickProcessor {
 
     fn tick_scroll(
         &mut self,
+        dt_s: f32,
         sink: &mut impl FnMut(Action),
         axes_list: &[(ControllerId, [f32; 6])],
         bindings: &CompiledStickRules,
@@ -332,7 +433,6 @@ impl StickProcessor {
                 }
                 let mag_raw = x.abs().max(y.abs());
                 if mag_raw > params.deadzone {
-                    let dt_s = 0.1;
                     let sidx = super::util::side_index(&StickSide::Left);
                     let accum = &mut self.controllers.entry(cid).or_default().sides
                         [sidx]
@@ -342,10 +442,20 @@ impl StickProcessor {
                     let h = accum.0.round() as i32;
                     let v = accum.1.round() as i32;
                     if h != 0 {
+                        print_debug!(
+                            "stick scroll: controller={cid} side=Left raw=({x0:.3},{y0:.3}) adjusted=({x:.3},{y:.3}) accum=({:.3},{:.3}) emit_h={h}",
+                            accum.0,
+                            accum.1
+                        );
                         (sink)(Action::Scroll { h, v: 0 });
                         accum.0 -= h as f32;
                     }
                     if v != 0 {
+                        print_debug!(
+                            "stick scroll: controller={cid} side=Left raw=({x0:.3},{y0:.3}) adjusted=({x:.3},{y:.3}) accum=({:.3},{:.3}) emit_v={v}",
+                            accum.0,
+                            accum.1
+                        );
                         (sink)(Action::Scroll { h: 0, v });
                         accum.1 -= v as f32;
                     }
@@ -360,7 +470,6 @@ impl StickProcessor {
                 }
                 let mag_raw = x.abs().max(y.abs());
                 if mag_raw > params.deadzone {
-                    let dt_s = 0.1;
                     let sidx = super::util::side_index(&StickSide::Right);
                     let accum = &mut self.controllers.entry(cid).or_default().sides
                         [sidx]
@@ -370,10 +479,20 @@ impl StickProcessor {
                     let h = accum.0.round() as i32;
                     let v = accum.1.round() as i32;
                     if h != 0 {
+                        print_debug!(
+                            "stick scroll: controller={cid} side=Right raw=({x0:.3},{y0:.3}) adjusted=({x:.3},{y:.3}) accum=({:.3},{:.3}) emit_h={h}",
+                            accum.0,
+                            accum.1
+                        );
                         (sink)(Action::Scroll { h, v: 0 });
                         accum.0 -= h as f32;
                     }
                     if v != 0 {
+                        print_debug!(
+                            "stick scroll: controller={cid} side=Right raw=({x0:.3},{y0:.3}) adjusted=({x:.3},{y:.3}) accum=({:.3},{:.3}) emit_v={v}",
+                            accum.0,
+                            accum.1
+                        );
                         (sink)(Action::Scroll { h: 0, v });
                         accum.1 -= v as f32;
                     }

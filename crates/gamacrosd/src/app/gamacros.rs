@@ -200,6 +200,12 @@ impl Gamacros {
             .active_stick_rules
             .as_deref()
             .map(CompiledStickRules::from_rules);
+
+        print_debug!(
+            "active stick rules updated: app={app} has_rules={} has_compiled={}",
+            self.active_stick_rules.is_some(),
+            self.compiled_stick_rules.is_some()
+        );
     }
 
     pub fn get_active_app(&self) -> &str {
@@ -213,7 +219,22 @@ impl Gamacros {
     pub fn on_axis_motion(&mut self, id: ControllerId, axis: CtrlAxis, value: f32) {
         let idx = stick_axis_index(axis);
         if let Some(st) = self.controllers.get_mut(&id) {
+            let prev = st.axes[idx];
             st.axes[idx] = value;
+            let threshold = 0.05;
+            let became_active = prev.abs() < threshold && value.abs() >= threshold;
+            let became_idle = prev.abs() >= threshold && value.abs() < threshold;
+            let changed_significantly = (prev - value).abs() >= 0.1;
+            if became_active || became_idle || changed_significantly {
+                print_debug!(
+                    "axis motion: controller={id} axis={axis:?} value={value:.3} prev={prev:.3} active={}",
+                    value.abs() >= threshold
+                );
+            }
+        } else {
+            print_debug!(
+                "axis motion ignored for unknown controller={id} axis={axis:?}"
+            );
         }
     }
 
@@ -224,16 +245,29 @@ impl Gamacros {
     }
 
     pub fn on_tick_with<F: FnMut(Action)>(&mut self, sink: F) {
+        let started_at = Instant::now();
         let bindings_owned = self.get_compiled_stick_rules().cloned();
         self.axes_scratch.clear();
         self.axes_scratch.reserve(self.controllers.len());
         for (id, st) in self.controllers.iter() {
             self.axes_scratch.push((*id, st.axes));
         }
+        print_debug!(
+            "stick tick: controllers={} axes_snapshots={} has_bindings={} active_repeats={} button_repeats={}",
+            self.controllers.len(),
+            self.axes_scratch.len(),
+            bindings_owned.is_some(),
+            self.sticks.borrow().has_active_repeats(),
+            self.button_repeats.len()
+        );
         self.sticks.borrow_mut().on_tick_with(
             bindings_owned.as_ref(),
             &self.axes_scratch,
             sink,
+        );
+        print_debug!(
+            "stick tick done: elapsed_us={}",
+            started_at.elapsed().as_micros()
         );
     }
 
@@ -250,7 +284,13 @@ impl Gamacros {
         now: std::time::Instant,
         mut sink: F,
     ) {
+        let started_at = Instant::now();
+        print_debug!("processing stick repeats at {now:?}");
         self.sticks.borrow_mut().process_due_repeats(now, &mut sink);
+        print_debug!(
+            "processing stick repeats done: elapsed_us={}",
+            started_at.elapsed().as_micros()
+        );
     }
 
     /// Return next due time for any button repeat task, if any.
@@ -264,15 +304,24 @@ impl Gamacros {
         now: Instant,
         sink: &mut F,
     ) {
+        let started_at = Instant::now();
+        let mut fired = 0usize;
         for task in self.button_repeats.values_mut() {
             if now >= task.next_fire {
                 sink(Action::KeyTap(task.key.clone()));
+                fired += 1;
                 if !task.delay_done {
                     task.delay_done = true;
                 }
                 task.next_fire =
                     now + std::time::Duration::from_millis(task.interval_ms);
             }
+        }
+        if fired > 0 {
+            print_debug!(
+                "processed button repeats: fired={fired} elapsed_us={}",
+                started_at.elapsed().as_micros()
+            );
         }
     }
 
@@ -285,17 +334,55 @@ impl Gamacros {
     /// True when there are tick-requiring stick modes and some axis deviates from neutral,
     /// or when repeat tasks are active (to drain their timers).
     pub fn needs_tick(&self) -> bool {
-        (self.has_tick_modes() && self.has_axis_activity(0.05))
-            || self.sticks.borrow().has_active_repeats()
-            || self.has_active_button_repeats()
+        let has_tick_modes = self.has_tick_modes();
+        let has_axis_activity = self.has_axis_activity(0.05);
+        let has_stick_repeats = self.sticks.borrow().has_active_repeats();
+        let has_button_repeats = self.has_active_button_repeats();
+        let needs_tick = (has_tick_modes && has_axis_activity)
+            || has_stick_repeats
+            || has_button_repeats;
+        if needs_tick {
+            print_debug!(
+                "needs_tick=true tick_modes={has_tick_modes} axis_activity={has_axis_activity} stick_repeats={has_stick_repeats} button_repeats={has_button_repeats}"
+            );
+        }
+        needs_tick
     }
 
     /// Hint whether a faster tick would improve responsiveness.
     /// True when there is recent/ongoing axis activity or repeat tasks are active.
     pub fn wants_fast_tick(&self) -> bool {
-        self.has_axis_activity(0.05)
-            || self.sticks.borrow().has_active_repeats()
-            || self.has_active_button_repeats()
+        let axis_activity = self.has_axis_activity(0.05);
+        let stick_repeats = self.sticks.borrow().has_active_repeats();
+        let button_repeats = self.has_active_button_repeats();
+        let fast = axis_activity || stick_repeats || button_repeats;
+        if fast {
+            print_debug!(
+                "wants_fast_tick=true axis_activity={axis_activity} stick_repeats={stick_repeats} button_repeats={button_repeats}"
+            );
+        }
+        fast
+    }
+
+    pub fn wants_ultra_fast_tick(&self) -> bool {
+        self.has_mouse_move_mode() && self.has_axis_activity(0.05)
+    }
+
+    pub fn mouse_move_tick_ms(&self) -> Option<u64> {
+        let bindings = self.get_compiled_stick_rules()?;
+        let mut tick_ms: Option<u64> = None;
+
+        for side in [bindings.left(), bindings.right()] {
+            let Some(StickMode::MouseMove(params)) = side else {
+                continue;
+            };
+            tick_ms = Some(match tick_ms {
+                Some(current_tick_ms) => current_tick_ms.min(params.runtime.tick_ms),
+                None => params.runtime.tick_ms,
+            });
+        }
+
+        tick_ms
     }
 
     /// Whether the current profile has any stick modes that require periodic ticks.
@@ -322,6 +409,15 @@ impl Gamacros {
                     | StickMode::Scroll(_)
             )
         )
+    }
+
+    fn has_mouse_move_mode(&self) -> bool {
+        let Some(bindings) = self.get_compiled_stick_rules() else {
+            return false;
+        };
+
+        matches!(bindings.left(), Some(StickMode::MouseMove(_)))
+            || matches!(bindings.right(), Some(StickMode::MouseMove(_)))
     }
 
     /// Detect if any controller axis deviates beyond a small threshold.

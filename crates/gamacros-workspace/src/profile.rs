@@ -193,6 +193,14 @@ pub struct MouseParams {
     pub gamma: f32,
     pub invert_x: bool,
     pub invert_y: bool,
+    pub runtime: MouseRuntimeParams,
+}
+
+/// Runtime tuning parameters for mouse move mode.
+#[derive(Debug, Clone)]
+pub struct MouseRuntimeParams {
+    pub tick_ms: u64,
+    pub smoothing_window_ms: u64,
 }
 
 /// Parameters for the scroll mode.

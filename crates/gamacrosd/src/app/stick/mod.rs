@@ -6,7 +6,7 @@ pub(crate) mod util;
 pub(crate) use compiled::CompiledStickRules;
 pub(crate) use repeat::StickProcessor;
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug)]
 pub(super) enum StepperMode {
     Volume,
     Brightness,

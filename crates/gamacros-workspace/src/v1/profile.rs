@@ -89,6 +89,10 @@ pub(crate) struct ProfileV1Stick {
     pub max_speed_px_s: Option<f32>,
     #[serde(default)]
     pub gamma: Option<f32>,
+    #[serde(default)]
+    pub tick_ms: Option<u64>,
+    #[serde(default)]
+    pub smoothing_window_ms: Option<u64>,
     // scroll
     #[serde(default)]
     pub speed_lines_s: Option<f32>,

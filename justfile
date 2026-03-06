@@ -4,6 +4,8 @@ VERSION := "0.1.2"
 
 BIN_PATH_RELEASE := "target/release/gamacrosd"
 BIN_PATH_DEBUG := "target/debug/gamacrosd"
+BIN_PATH_INSTALLED := env_var_or_default("HOME", "") + "/.cargo/bin/gamacrosd"
+MACOS_DEBUG_SIGN_IDENTITY := "FreeFlow Debug"
 
 BREW_LIBRARY_PATH := `brew --prefix` / "lib"
 
@@ -20,6 +22,7 @@ start *ARGS:
 [group: 'build']
 install:
   cargo install --profile release --path crates/gamacrosd
+  codesign --force --sign {{ quote(MACOS_DEBUG_SIGN_IDENTITY) }} {{ quote(BIN_PATH_INSTALLED) }}
 
 [group: 'build']
 build: build-release
@@ -27,10 +30,12 @@ build: build-release
 [group: 'build']
 build-release:
   cargo build --release -p gamacrosd
+  codesign --force --sign {{ quote(MACOS_DEBUG_SIGN_IDENTITY) }} {{ quote(BIN_PATH_RELEASE) }}
 
 [group: 'build']
 build-debug:
   cargo build -p gamacrosd
+  codesign --force --sign {{ quote(MACOS_DEBUG_SIGN_IDENTITY) }} {{ quote(BIN_PATH_DEBUG) }}
 
 # Quality Assurance
 [group: 'qa']
