@@ -33,6 +33,24 @@ struct ButtonRepeatTask {
     delay_done: bool,
 }
 
+#[derive(Debug, Clone)]
+struct ButtonTransition {
+    target_button: Button,
+    effects: Vec<Effect>,
+    repeat: ButtonRepeatDirective,
+}
+
+#[derive(Debug, Clone)]
+enum ButtonRepeatDirective {
+    None,
+    Start {
+        key: KeyCombo,
+        delay_ms: u64,
+        interval_ms: u64,
+    },
+    Stop,
+}
+
 pub struct Gamacros {
     pub workspace: Option<Profile>,
     active_app: Box<str>,
@@ -406,6 +424,65 @@ impl Gamacros {
         // snapshot after change — drop mutable borrow of controllers after this
         let now_pressed = state.pressed;
 
+        let transitions = Self::resolve_button_transitions(
+            button_rules,
+            prev_pressed,
+            now_pressed,
+            phase,
+            id,
+            button,
+            rumble,
+        );
+
+        if transitions.is_empty() {
+            print_debug!(
+                "no matching rule for pressed={now_pressed:?} (button_rules={})",
+                button_rules.len()
+            );
+            return;
+        }
+
+        for transition in transitions {
+            for effect in transition.effects {
+                sink(effect);
+            }
+
+            match transition.repeat {
+                ButtonRepeatDirective::None => {}
+                ButtonRepeatDirective::Start {
+                    key,
+                    delay_ms,
+                    interval_ms,
+                } => {
+                    self.button_repeats.insert(
+                        (id, transition.target_button),
+                        ButtonRepeatTask {
+                            key,
+                            interval_ms,
+                            next_fire: Instant::now()
+                                + std::time::Duration::from_millis(delay_ms),
+                            delay_done: false,
+                        },
+                    );
+                }
+                ButtonRepeatDirective::Stop => {
+                    self.button_repeats.remove(&(id, transition.target_button));
+                }
+            }
+        }
+    }
+
+    fn resolve_button_transitions(
+        button_rules: &gamacros_workspace::ButtonRules,
+        prev_pressed: Bitmask<Button>,
+        now_pressed: Bitmask<Button>,
+        phase: ButtonPhase,
+        id: ControllerId,
+        button: Button,
+        rumble: bool,
+    ) -> Vec<ButtonTransition> {
+        let mut transitions = Vec::new();
+
         // First pass: find max_bits among rules that should fire
         let mut max_bits: u32 = 0;
         for (target, _rule) in button_rules.iter() {
@@ -423,11 +500,7 @@ impl Gamacros {
             }
         }
         if max_bits == 0 {
-            print_debug!(
-                "no matching rule for pressed={now_pressed:?} (button_rules={})",
-                button_rules.len()
-            );
-            return;
+            return transitions;
         }
         print_debug!("firing rule with max_bits={max_bits}");
 
@@ -444,66 +517,81 @@ impl Gamacros {
             }
             match phase {
                 ButtonPhase::Pressed => {
+                    let mut effects = Vec::new();
                     if let Some(ms) = rule.vibrate {
                         if rumble {
-                            sink(Effect::Rumble { id, ms: ms as u32 });
+                            effects.push(Effect::Rumble { id, ms: ms as u32 });
                         }
                     }
-                    match rule.action.clone() {
+                    let repeat = match rule.action.clone() {
                         ButtonAction::Keystroke(k) => {
-                            sink(Effect::KeyTap((*k).clone()));
-                            let delay_ms = rule
-                                .repeat_delay_ms
-                                .unwrap_or(DEFAULT_REPEAT_DELAY_MS);
-                            let interval_ms = rule
-                                .repeat_interval_ms
-                                .unwrap_or(DEFAULT_REPEAT_INTERVAL_MS);
-                            self.button_repeats.insert(
-                                (id, button),
-                                ButtonRepeatTask {
-                                    key: (*k).clone(),
-                                    interval_ms,
-                                    next_fire: Instant::now()
-                                        + std::time::Duration::from_millis(delay_ms),
-                                    delay_done: false,
-                                },
-                            );
+                            effects.push(Effect::KeyTap((*k).clone()));
+                            ButtonRepeatDirective::Start {
+                                key: (*k).clone(),
+                                delay_ms: rule
+                                    .repeat_delay_ms
+                                    .unwrap_or(DEFAULT_REPEAT_DELAY_MS),
+                                interval_ms: rule
+                                    .repeat_interval_ms
+                                    .unwrap_or(DEFAULT_REPEAT_INTERVAL_MS),
+                            }
                         }
                         ButtonAction::TapKeystroke(k) => {
-                            sink(Effect::KeyTap((*k).clone()));
+                            effects.push(Effect::KeyTap((*k).clone()));
+                            ButtonRepeatDirective::None
                         }
                         ButtonAction::Macros(m) => {
-                            sink(Effect::Macros(m));
+                            effects.push(Effect::Macros(m));
+                            ButtonRepeatDirective::None
                         }
                         ButtonAction::Shell(s) => {
                             print_debug!("shell command: {}", s);
-                            sink(Effect::Shell(s));
+                            effects.push(Effect::Shell(s));
+                            ButtonRepeatDirective::None
                         }
                         ButtonAction::MouseClick { button, click_type } => {
-                            sink(Effect::MouseClick { button, click_type });
+                            effects.push(Effect::MouseClick { button, click_type });
+                            ButtonRepeatDirective::None
                         }
                         ButtonAction::HoldClick(btn) => {
-                            sink(Effect::MousePress { button: btn });
+                            effects.push(Effect::MousePress { button: btn });
+                            ButtonRepeatDirective::None
                         }
                         ButtonAction::RawModifier(key) => {
-                            sink(Effect::RawModifierPress(key));
+                            effects.push(Effect::RawModifierPress(key));
+                            ButtonRepeatDirective::None
                         }
-                    }
+                    };
+                    transitions.push(ButtonTransition {
+                        target_button: button,
+                        effects,
+                        repeat,
+                    });
                 }
-                ButtonPhase::Released => match rule.action.clone() {
-                    ButtonAction::Keystroke(_) => {
-                        self.button_repeats.remove(&(id, button));
-                    }
-                    ButtonAction::HoldClick(btn) => {
-                        sink(Effect::MouseRelease { button: btn });
-                    }
-                    ButtonAction::RawModifier(key) => {
-                        sink(Effect::RawModifierRelease(key));
-                    }
-                    _ => {}
-                },
+                ButtonPhase::Released => {
+                    let mut effects = Vec::new();
+                    let repeat = match rule.action.clone() {
+                        ButtonAction::Keystroke(_) => ButtonRepeatDirective::Stop,
+                        ButtonAction::HoldClick(btn) => {
+                            effects.push(Effect::MouseRelease { button: btn });
+                            ButtonRepeatDirective::None
+                        }
+                        ButtonAction::RawModifier(key) => {
+                            effects.push(Effect::RawModifierRelease(key));
+                            ButtonRepeatDirective::None
+                        }
+                        _ => ButtonRepeatDirective::None,
+                    };
+                    transitions.push(ButtonTransition {
+                        target_button: button,
+                        effects,
+                        repeat,
+                    });
+                }
             }
         }
+
+        transitions
     }
 
     fn rebuild_binding_context(&mut self) {
