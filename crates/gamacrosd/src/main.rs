@@ -1,9 +1,10 @@
 mod app;
-mod logging;
-mod cli;
-mod runner;
-mod api;
 mod activity;
+mod api;
+mod cli;
+mod domain;
+mod logging;
+mod runner;
 #[cfg(target_os = "macos")]
 mod accessibility;
 
@@ -11,20 +12,21 @@ use std::fs::File;
 use std::path::PathBuf;
 use std::{process, time::Duration};
 
+use clap::Parser;
 use colored::Colorize;
 use crossbeam_channel::{select, unbounded};
-use clap::Parser;
 use lunchctl::{LaunchAgent, LaunchControllable};
 use crate::activity::{ActivityEvent, Monitor, NotificationListener};
 
-use gamacros_gamepad::{ControllerEvent, ControllerManager};
 use gamacros_control::Performer;
-use gamacros_workspace::{Workspace, ProfileEvent};
+use gamacros_gamepad::{ControllerEvent, ControllerManager};
+use gamacros_workspace::{ProfileEvent, Workspace};
 
-use crate::app::{Gamacros, ButtonPhase};
+use crate::api::{ApiTransport, Command as ApiCommand, UnixSocket};
+use crate::app::{ButtonPhase, Gamacros};
 use crate::cli::{Cli, Command, ControlCommand};
+use crate::domain::{DomainEvent, SystemEvent, TimerEvent};
 use crate::runner::ActionRunner;
-use crate::api::{UnixSocket, ApiTransport, Command as ApiCommand};
 
 const APP_LABEL: &str = "co.myrt.gamacros";
 
@@ -174,6 +176,153 @@ fn resolve_workspace_path(workspace: Option<&str>) -> PathBuf {
     }
 }
 
+enum EventLoopControl {
+    Continue,
+    Break,
+}
+
+struct WakeState {
+    need_reschedule: bool,
+    ticking_enabled: bool,
+    fast_mode: bool,
+    fast_until: std::time::Instant,
+    next_tick_due: Option<std::time::Instant>,
+}
+
+impl WakeState {
+    fn new(now: std::time::Instant) -> Self {
+        Self {
+            need_reschedule: true,
+            ticking_enabled: false,
+            fast_mode: false,
+            fast_until: now,
+            next_tick_due: None,
+        }
+    }
+}
+
+fn handle_domain_event(
+    event: DomainEvent,
+    gamacros: &mut Gamacros,
+    action_runner: &mut ActionRunner<'_>,
+    manager: &ControllerManager,
+    wake_state: &mut WakeState,
+) -> EventLoopControl {
+    match event {
+        DomainEvent::Controller(controller_event) => match controller_event {
+            ControllerEvent::Connected(info) => {
+                let id = info.id;
+                if gamacros.is_known(id) {
+                    return EventLoopControl::Continue;
+                }
+
+                gamacros.add_controller(info);
+                wake_state.need_reschedule = true;
+            }
+            ControllerEvent::Disconnected(id) => {
+                gamacros.remove_controller(id);
+                gamacros.on_controller_disconnected(id);
+                wake_state.need_reschedule = true;
+            }
+            ControllerEvent::ButtonPressed { id, button } => {
+                gamacros.on_button_with(
+                    id,
+                    button,
+                    ButtonPhase::Pressed,
+                    |action| {
+                        action_runner.run(action);
+                    },
+                );
+                wake_state.need_reschedule = true;
+            }
+            ControllerEvent::ButtonReleased { id, button } => {
+                gamacros.on_button_with(
+                    id,
+                    button,
+                    ButtonPhase::Released,
+                    |action| {
+                        action_runner.run(action);
+                    },
+                );
+                wake_state.need_reschedule = true;
+            }
+            ControllerEvent::AxisMotion { id, axis, value } => {
+                gamacros.on_axis_motion(id, axis, value);
+                wake_state.need_reschedule = true;
+            }
+        },
+        DomainEvent::Activity(activity_event) => {
+            let ActivityEvent::DidActivateApplication(bundle_id) = activity_event
+            else {
+                return EventLoopControl::Continue;
+            };
+            gamacros.set_active_app(&bundle_id);
+            wake_state.need_reschedule = true;
+        }
+        DomainEvent::Profile(profile_event) => match profile_event {
+            ProfileEvent::Changed(workspace) => {
+                print_info!("profile changed, updating workspace");
+                if let Some(shell) = workspace.shell.clone() {
+                    action_runner.set_shell(shell);
+                }
+                gamacros.set_workspace(workspace);
+                wake_state.need_reschedule = true;
+            }
+            ProfileEvent::Removed => {
+                gamacros.remove_workspace();
+                wake_state.need_reschedule = true;
+            }
+            ProfileEvent::Error(error) => {
+                print_error!("profile error: {error}");
+            }
+        },
+        DomainEvent::Api(command) => match command {
+            ApiCommand::Rumble { id, ms } => match id {
+                Some(controller_id) => {
+                    action_runner.run(crate::app::Action::Rumble {
+                        id: controller_id,
+                        ms,
+                    });
+                }
+                None => {
+                    for info in manager.controllers() {
+                        action_runner
+                            .run(crate::app::Action::Rumble { id: info.id, ms });
+                    }
+                }
+            },
+        },
+        DomainEvent::Timer(TimerEvent::Wake) => {
+            let now = std::time::Instant::now();
+            if let Some(due) = wake_state.next_tick_due {
+                if now >= due {
+                    gamacros.on_tick_with(|action| {
+                        action_runner.run(action);
+                    });
+                    if gamacros.wants_fast_tick() {
+                        wake_state.fast_mode = true;
+                        wake_state.fast_until = now + Duration::from_millis(250);
+                    } else if wake_state.fast_mode && now >= wake_state.fast_until {
+                        wake_state.fast_mode = false;
+                    }
+                }
+            }
+            gamacros.process_due_repeats(now, |action| {
+                action_runner.run(action);
+            });
+            gamacros.process_button_repeats(now, &mut |action| {
+                action_runner.run(action);
+            });
+            wake_state.need_reschedule = true;
+        }
+        DomainEvent::System(SystemEvent::ShutdownRequested) => {
+            return EventLoopControl::Break;
+        }
+    }
+
+    EventLoopControl::Continue
+}
+
 fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
     // Ensure only one instance runs per workspace by holding an exclusive flock.
     if let Some(ws) = maybe_workspace_path.as_ref() {
@@ -191,7 +340,10 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                 std::mem::forget(guard);
             }
             Err(_) => {
-                print_error!("another gamacrosd is already running (lock: {})", lock_path.display());
+                print_error!(
+                    "another gamacrosd is already running (lock: {})",
+                    lock_path.display()
+                );
                 process::exit(1);
             }
         }
@@ -246,202 +398,169 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
         .name("event-loop".into())
         .stack_size(512 * 1024)
         .spawn(move || {
-        let manager =
-            ControllerManager::new().expect("failed to start controller manager");
-        let rx = manager.subscribe();
-        let mut keypress = Performer::new().expect("failed to start keypress");
-        // Single coalesced wake timer: earliest of movement tick and repeat deadlines.
-        let mut wake_rx = crossbeam_channel::never::<std::time::Instant>();
-        let idle_period = Duration::from_millis(16);
-        let fast_period = Duration::from_millis(10);
-        let mut ticking_enabled = false;
-        let mut fast_mode = false;
-        let mut fast_until = std::time::Instant::now();
-        let mut next_tick_due: Option<std::time::Instant> = None;
-        let mut need_reschedule_wake = true;
+            let manager = ControllerManager::new()
+                .expect("failed to start controller manager");
+            let rx = manager.subscribe();
+            let mut keypress = Performer::new().expect("failed to start keypress");
+            // Single coalesced wake timer: earliest of movement tick and repeat deadlines.
+            let mut wake_rx = crossbeam_channel::never::<std::time::Instant>();
+            let idle_period = Duration::from_millis(16);
+            let fast_period = Duration::from_millis(10);
+            let mut wake_state = WakeState::new(std::time::Instant::now());
 
-        let workspace = match Workspace::new(workspace_path.as_deref()) {
-            Ok(workspace) => workspace,
-            Err(e) => {
-                print_error!("failed to start workspace: {e}");
-                return;
-            }
-        };
-
-        let maybe_watcher = workspace_path
-            .as_ref()
-            .map(|_| workspace.start_profile_watcher())
-            .transpose()
-            .expect("failed to start workspace watcher");
-
-        let (maybe_workspace_rx, _profile_watcher) = match maybe_watcher {
-            Some((watcher, rx)) => (Some(rx), Some(watcher)),
-            None => (None, None),
-        };
-
-        let mut action_runner = ActionRunner::new(&mut keypress, &manager);
-
-        print_info!(
-            "gamacrosd started. Listening for controller and activity events."
-        );
-        loop {
-            select! {
-                recv(stop_rx) -> _ => {
-                    break;
+            let workspace = match Workspace::new(workspace_path.as_deref()) {
+                Ok(workspace) => workspace,
+                Err(e) => {
+                    print_error!("failed to start workspace: {e}");
+                    return;
                 }
-                recv(rx) -> msg => {
-                    match msg {
-                        Ok(ControllerEvent::Connected(info)) => {
-                            let id = info.id;
-                            if gamacros.is_known(id) {
-                                continue;
-                            }
+            };
 
-                            gamacros.add_controller(info);
-                            need_reschedule_wake = true;
+            let maybe_watcher = workspace_path
+                .as_ref()
+                .map(|_| workspace.start_profile_watcher())
+                .transpose()
+                .expect("failed to start workspace watcher");
+
+            let (maybe_workspace_rx, _profile_watcher) = match maybe_watcher {
+                Some((watcher, rx)) => (Some(rx), Some(watcher)),
+                None => (None, None),
+            };
+
+            let mut action_runner = ActionRunner::new(&mut keypress, &manager);
+
+            print_info!(
+                "gamacrosd started. Listening for controller and activity events."
+            );
+            loop {
+                select! {
+                    recv(stop_rx) -> _ => {
+                        if let EventLoopControl::Break = handle_domain_event(
+                            DomainEvent::System(SystemEvent::ShutdownRequested),
+                            &mut gamacros,
+                            &mut action_runner,
+                            &manager,
+                            &mut wake_state,
+                        ) {
+                            break;
                         }
-                        Ok(ControllerEvent::Disconnected(id)) => {
-                            gamacros.remove_controller(id);
-                            gamacros.on_controller_disconnected(id);
-                            need_reschedule_wake = true;
+                    }
+                    recv(rx) -> msg => {
+                        match msg {
+                            Ok(event) => {
+                                if let EventLoopControl::Break = handle_domain_event(
+                                    DomainEvent::Controller(event),
+                                    &mut gamacros,
+                                    &mut action_runner,
+                                    &manager,
+                                    &mut wake_state,
+                                ) {
+                                    break;
+                                }
+                            }
+                            Err(err) => {
+                                print_error!("event channel closed: {err}");
+                                break;
+                            }
                         }
-                        Ok(ControllerEvent::ButtonPressed { id, button }) => {
-                            gamacros.on_button_with(id, button, ButtonPhase::Pressed, |action| {
-                                action_runner.run(action);
-                            });
-                            need_reschedule_wake = true;
+                    }
+                    recv(api_rx) -> cmd => {
+                        if let Ok(command) = cmd {
+                            if let EventLoopControl::Break = handle_domain_event(
+                                DomainEvent::Api(command),
+                                &mut gamacros,
+                                &mut action_runner,
+                                &manager,
+                                &mut wake_state,
+                            ) {
+                                break;
+                            }
                         }
-                        Ok(ControllerEvent::ButtonReleased { id, button }) => {
-                            gamacros.on_button_with(id, button, ButtonPhase::Released, |action| {
-                                action_runner.run(action);
-                            });
-                            need_reschedule_wake = true;
-                        }
-                        Ok(ControllerEvent::AxisMotion { id, axis, value }) => {
-                            gamacros.on_axis_motion(id, axis, value);
-                            // Axis moved: if previously gated by neutral, re-arm wake.
-                            need_reschedule_wake = true;
-                        }
-                        Err(err) => {
-                            print_error!("event channel closed: {err}");
+                    }
+                    recv(wake_rx) -> _ => {
+                        if let EventLoopControl::Break = handle_domain_event(
+                            DomainEvent::Timer(TimerEvent::Wake),
+                            &mut gamacros,
+                            &mut action_runner,
+                            &manager,
+                            &mut wake_state,
+                        ) {
                             break;
                         }
                     }
                 }
-                recv(api_rx) -> cmd => {
-                    match cmd {
-                        Ok(ApiCommand::Rumble { id, ms }) => {
-                            match id {
-                                Some(cid) => {
-                                    action_runner.run(crate::app::Action::Rumble { id: cid, ms });
-                                }
-                                None => {
-                                    for info in manager.controllers() {
-                                        action_runner.run(crate::app::Action::Rumble { id: info.id, ms });
-                                    }
-                                }
-                            }
-                        }
-                        Err(_) => {
-                            // control channel closed; continue running
-                        }
+                while let Ok(msg) = activity_std_rx.try_recv() {
+                    if let EventLoopControl::Break = handle_domain_event(
+                        DomainEvent::Activity(msg),
+                        &mut gamacros,
+                        &mut action_runner,
+                        &manager,
+                        &mut wake_state,
+                    ) {
+                        break;
                     }
                 }
-                recv(wake_rx) -> _ => {
-                    let now = std::time::Instant::now();
-                    // Run movement tick if due
-                    if let Some(due) = next_tick_due {
-                        if now >= due {
-                            gamacros.on_tick_with(|action| {
-                                action_runner.run(action);
-                            });
-                            // Update adaptive mode hints
-                            if gamacros.wants_fast_tick() {
-                                fast_mode = true;
-                                fast_until = now + Duration::from_millis(250);
-                            } else if fast_mode && now >= fast_until {
-                                fast_mode = false;
-                            }
-                        }
-                    }
-                    // Run stick repeats due (may be multiple)
-                    gamacros.process_due_repeats(now, |action| { action_runner.run(action); });
-                    // Run button repeats due
-                    gamacros.process_button_repeats(now, &mut |action| { action_runner.run(action); });
-                    need_reschedule_wake = true;
-                }
-            }
-            while let Ok(msg) = activity_std_rx.try_recv() {
-                let ActivityEvent::DidActivateApplication(bundle_id) = msg else {
+                let Some(workspace_rx) = maybe_workspace_rx.as_ref() else {
                     continue;
                 };
-                gamacros.set_active_app(&bundle_id);
-                // App change may alter stick modes; mark for reschedule
-                need_reschedule_wake = true;
-            }
-            let Some(workspace_rx) = maybe_workspace_rx.as_ref() else {
-                continue;
-            };
 
-            while let Ok(msg) = workspace_rx.try_recv() {
-                match msg {
-                    ProfileEvent::Changed(workspace) => {
-                        print_info!("profile changed, updating workspace");
-                        if let Some(shell) = workspace.shell.clone() {
-                            action_runner.set_shell(shell);
-                        }
-                        gamacros.set_workspace(workspace);
-                        need_reschedule_wake = true;
-                    }
-                    ProfileEvent::Removed => {
-                        gamacros.remove_workspace();
-                        need_reschedule_wake = true;
-                    }
-                    ProfileEvent::Error(error) => {
-                        print_error!("profile error: {error}");
+                while let Ok(msg) = workspace_rx.try_recv() {
+                    if let EventLoopControl::Break = handle_domain_event(
+                        DomainEvent::Profile(msg),
+                        &mut gamacros,
+                        &mut action_runner,
+                        &manager,
+                        &mut wake_state,
+                    ) {
+                        break;
                     }
                 }
-            }
-            if need_reschedule_wake {
-                let now = std::time::Instant::now();
-                // Recompute next tick due
-                if gamacros.needs_tick() {
-                    if !ticking_enabled {
-                        fast_mode = gamacros.wants_fast_tick();
-                        if fast_mode {
-                            fast_until = now + Duration::from_millis(250);
+                if wake_state.need_reschedule {
+                    let now = std::time::Instant::now();
+                    // Recompute next tick due
+                    if gamacros.needs_tick() {
+                        if !wake_state.ticking_enabled {
+                            wake_state.fast_mode = gamacros.wants_fast_tick();
+                            if wake_state.fast_mode {
+                                wake_state.fast_until =
+                                    now + Duration::from_millis(250);
+                            }
                         }
+                        let period = if wake_state.fast_mode {
+                            fast_period
+                        } else {
+                            idle_period
+                        };
+                        wake_state.next_tick_due = Some(now + period);
+                        wake_state.ticking_enabled = true;
+                    } else {
+                        wake_state.next_tick_due = None;
+                        wake_state.ticking_enabled = false;
                     }
-                    let period = if fast_mode { fast_period } else { idle_period };
-                    next_tick_due = Some(now + period);
-                    ticking_enabled = true;
-                } else {
-                    next_tick_due = None;
-                    ticking_enabled = false;
-                }
-                // Recompute next repeat due (sticks + buttons)
-                let repeat_due = gamacros.next_repeat_due();
-                let button_repeat_due = gamacros.next_button_repeat_due();
+                    // Recompute next repeat due (sticks + buttons)
+                    let repeat_due = gamacros.next_repeat_due();
+                    let button_repeat_due = gamacros.next_button_repeat_due();
 
-                // Arm single wake for the earliest deadline
-                let mut next_due = next_tick_due;
-                for candidate in [repeat_due, button_repeat_due] {
-                    next_due = match (next_due, candidate) {
-                        (Some(a), Some(b)) => Some(core::cmp::min(a, b)),
-                        (Some(a), None) => Some(a),
-                        (None, b) => b,
-                    };
+                    // Arm single wake for the earliest deadline
+                    let mut next_due = wake_state.next_tick_due;
+                    for candidate in [repeat_due, button_repeat_due] {
+                        next_due = match (next_due, candidate) {
+                            (Some(a), Some(b)) => Some(core::cmp::min(a, b)),
+                            (Some(a), None) => Some(a),
+                            (None, b) => b,
+                        };
+                    }
+                    if let Some(due) = next_due {
+                        let dur = if due > now { due - now } else { Duration::ZERO };
+                        wake_rx = crossbeam_channel::after(dur);
+                    } else {
+                        wake_rx = crossbeam_channel::never();
+                    }
+                    wake_state.need_reschedule = false;
                 }
-                if let Some(due) = next_due {
-                    let dur = if due > now { due - now } else { Duration::ZERO };
-                    wake_rx = crossbeam_channel::after(dur);
-                } else {
-                    wake_rx = crossbeam_channel::never();
-                }
-                need_reschedule_wake = false;
             }
-        }
-    }).expect("failed to spawn event loop thread");
+        })
+        .expect("failed to spawn event loop thread");
 
     // Start monitoring on the main thread (blocks until error/exit)
     monitor.run();
