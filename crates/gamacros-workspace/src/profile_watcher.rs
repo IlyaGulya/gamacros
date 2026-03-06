@@ -34,17 +34,19 @@ pub type ProfileEventReceiver = mpsc::Receiver<ProfileEvent>;
 fn send_profile_event(path: &Path, tx: &ProfileEventSender) {
     debug!("[watcher] reading profile from {}", path.display());
     match fs::read_to_string(path) {
-        Ok(content) => match parse_profile(&content) {
-            Ok(workspace) => {
-                debug!("[watcher] profile parsed successfully, sending Changed event");
-                let _ = tx.send(ProfileEvent::Changed(workspace));
+        Ok(content) => {
+            match parse_profile(&content) {
+                Ok(workspace) => {
+                    debug!("[watcher] profile parsed successfully, sending Changed event");
+                    let _ = tx.send(ProfileEvent::Changed(workspace));
+                }
+                Err(e) => {
+                    warn!("[watcher] profile parse error: {e}");
+                    let error = WatcherError::Parse(e);
+                    let _ = tx.send(ProfileEvent::Error(error));
+                }
             }
-            Err(e) => {
-                warn!("[watcher] profile parse error: {e}");
-                let error = WatcherError::Parse(e);
-                let _ = tx.send(ProfileEvent::Error(error));
-            }
-        },
+        }
         Err(e) => {
             warn!("[watcher] failed to read profile: {e}");
             let error = WatcherError::Io(e);
@@ -75,7 +77,10 @@ impl<W: notify::Watcher> ProfileWatcher<W> {
         debug!(
             "[watcher] watching dir={} for file={} (resolved={})",
             watch_dir.display(),
-            file_name.as_ref().map(|f| f.to_string_lossy().into_owned()).unwrap_or_default(),
+            file_name
+                .as_ref()
+                .map(|f| f.to_string_lossy().into_owned())
+                .unwrap_or_default(),
             resolved.display(),
         );
 
@@ -118,12 +123,17 @@ impl<W: notify::Watcher> ProfileWatcher<W> {
                                     debug!("[watcher] profile file removed");
                                     let _ = tx_c.send(ProfileEvent::Removed);
                                 } else {
-                                    debug!("[watcher] profile file changed, reloading");
+                                    debug!(
+                                        "[watcher] profile file changed, reloading"
+                                    );
                                     send_profile_event(&path_c, &tx_c);
                                 }
                             }
                             _ => {
-                                debug!("[watcher] ignoring event kind {:?}", event.kind);
+                                debug!(
+                                    "[watcher] ignoring event kind {:?}",
+                                    event.kind
+                                );
                             }
                         }
                     }

@@ -85,27 +85,45 @@ impl<'de> Deserialize<'de> for KeyCombo {
 
 impl KeyCombo {
     pub fn perform(&self, enigo: &mut Enigo) -> InputResult<()> {
-        log::info!("[key_combo] perform: modifiers={:?} keys={:?}", self.modifiers, self.keys);
+        log::info!(
+            "[key_combo] perform: modifiers={:?} keys={:?}",
+            self.modifiers,
+            self.keys
+        );
         if self.modifiers.contains(Modifier::Ctrl) {
-            log::info!("[key_combo] perform: Press Control (enigo={:?})", enigo::Key::from(Key::Control));
+            log::info!(
+                "[key_combo] perform: Press Control (enigo={:?})",
+                enigo::Key::from(Key::Control)
+            );
             enigo.key(Key::Control.into(), Press)?;
         }
         if self.modifiers.contains(Modifier::Meta) {
-            log::info!("[key_combo] perform: Press Meta (enigo={:?})", enigo::Key::from(Key::Meta));
+            log::info!(
+                "[key_combo] perform: Press Meta (enigo={:?})",
+                enigo::Key::from(Key::Meta)
+            );
             enigo.key(Key::Meta.into(), Press)?;
         }
         if self.modifiers.contains(Modifier::Shift) {
-            log::info!("[key_combo] perform: Press Shift (enigo={:?})", enigo::Key::from(Key::Shift));
+            log::info!(
+                "[key_combo] perform: Press Shift (enigo={:?})",
+                enigo::Key::from(Key::Shift)
+            );
             enigo.key(Key::Shift.into(), Press)?;
         }
         if self.modifiers.contains(Modifier::Alt) {
-            log::info!("[key_combo] perform: Press Alt (enigo={:?})", enigo::Key::from(Key::Alt));
+            log::info!(
+                "[key_combo] perform: Press Alt (enigo={:?})",
+                enigo::Key::from(Key::Alt)
+            );
             enigo.key(Key::Alt.into(), Press)?;
         }
 
         for key in self.keys.iter() {
             let enigo_key: enigo::Key = key.into();
-            log::info!("[key_combo] perform: Click key={key:?} enigo_key={enigo_key:?}");
+            log::info!(
+                "[key_combo] perform: Click key={key:?} enigo_key={enigo_key:?}"
+            );
             enigo.key(enigo_key, Click)?;
         }
 
@@ -127,7 +145,11 @@ impl KeyCombo {
     }
 
     pub fn press(&self, enigo: &mut Enigo) -> InputResult<()> {
-        log::info!("[key_combo] press: modifiers={:?} keys={:?}", self.modifiers, self.keys);
+        log::info!(
+            "[key_combo] press: modifiers={:?} keys={:?}",
+            self.modifiers,
+            self.keys
+        );
         if self.modifiers.contains(Modifier::Ctrl) {
             log::info!("[key_combo] press: Press modifier Control");
             enigo.key(Key::Control.into(), Press)?;
@@ -146,7 +168,9 @@ impl KeyCombo {
         }
         for key in self.keys.iter() {
             let enigo_key: enigo::Key = key.into();
-            log::info!("[key_combo] press: Press key={key:?} enigo_key={enigo_key:?}");
+            log::info!(
+                "[key_combo] press: Press key={key:?} enigo_key={enigo_key:?}"
+            );
             enigo.key(enigo_key, Press)?;
         }
         log::info!("[key_combo] press: done");
@@ -155,7 +179,11 @@ impl KeyCombo {
     }
 
     pub fn release(&self, enigo: &mut Enigo) -> InputResult<()> {
-        log::info!("[key_combo] release: modifiers={:?} keys={:?}", self.modifiers, self.keys);
+        log::info!(
+            "[key_combo] release: modifiers={:?} keys={:?}",
+            self.modifiers,
+            self.keys
+        );
         if self.modifiers.contains(Modifier::Ctrl) {
             log::info!("[key_combo] release: Release modifier Control");
             enigo.key(Key::Control.into(), Release)?;
@@ -174,7 +202,9 @@ impl KeyCombo {
         }
         for key in self.keys.iter() {
             let enigo_key: enigo::Key = key.into();
-            log::info!("[key_combo] release: Release key={key:?} enigo_key={enigo_key:?}");
+            log::info!(
+                "[key_combo] release: Release key={key:?} enigo_key={enigo_key:?}"
+            );
             enigo.key(enigo_key, Release)?;
         }
         log::info!("[key_combo] release: done");

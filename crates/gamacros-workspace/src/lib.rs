@@ -15,8 +15,8 @@ pub use profile_parse::parse_profile;
 pub use profile::{
     Profile, ButtonAction, ButtonRule, ControllerSettings, ControllerSettingsMap,
     StickRules, ArrowsParams, Axis, MouseParams, ScrollParams, StepperParams,
-    StickMode, StickSide, AppRules, RuleMap, ButtonRules, Macros,
-    MouseButton, MouseClickType, RawModifierKey,
+    StickMode, StickSide, AppRules, RuleMap, ButtonRules, Macros, MouseButton,
+    MouseClickType, RawModifierKey,
 };
 // pub use profile::resolve_profile;
 pub use workspace::Workspace;

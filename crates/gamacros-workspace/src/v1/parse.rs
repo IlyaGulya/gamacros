@@ -8,8 +8,8 @@ use crate::v1::profile::{ProfileV1ButtonRule, ProfileV1Stick};
 use crate::profile::{
     AppRules, ArrowsParams, Axis, ButtonAction, ButtonRule, ButtonRules,
     ControllerSettings, ControllerSettingsMap, Macros, MouseButton, MouseClickType,
-    MouseParams, Profile, RawModifierKey, RuleMap, ScrollParams, StepperParams, StickMode,
-    StickRules, StickSide,
+    MouseParams, Profile, RawModifierKey, RuleMap, ScrollParams, StepperParams,
+    StickMode, StickRules, StickSide,
 };
 use crate::ButtonChord;
 
@@ -183,7 +183,15 @@ fn parse_button_rule(
     raw: ProfileV1ButtonRule,
     target_name: &str,
 ) -> Result<ButtonRule, Error> {
-    let action = match (raw.keystroke, raw.tap, raw.macros, raw.shell, raw.click, raw.hold_click, raw.rawkey) {
+    let action = match (
+        raw.keystroke,
+        raw.tap,
+        raw.macros,
+        raw.shell,
+        raw.click,
+        raw.hold_click,
+        raw.rawkey,
+    ) {
         (Some(keystroke), None, None, None, None, None, None) => {
             let keystroke = parse_keystroke(&keystroke)?;
             ButtonAction::Keystroke(Arc::new(keystroke))
@@ -196,7 +204,9 @@ fn parse_button_rule(
             let macros = parse_macros(&macros)?;
             ButtonAction::Macros(Arc::new(macros))
         }
-        (None, None, None, Some(shell), None, None, None) => ButtonAction::Shell(shell),
+        (None, None, None, Some(shell), None, None, None) => {
+            ButtonAction::Shell(shell)
+        }
         (None, None, None, None, Some(click), None, None) => {
             let (button, click_type) = parse_click_spec(&click, target_name)?;
             ButtonAction::MouseClick { button, click_type }
@@ -237,10 +247,7 @@ fn parse_click_spec(
     }
 }
 
-fn parse_mouse_button(
-    spec: &str,
-    target_name: &str,
-) -> Result<MouseButton, Error> {
+fn parse_mouse_button(spec: &str, target_name: &str) -> Result<MouseButton, Error> {
     match spec {
         "left" => Ok(MouseButton::Left),
         "right" => Ok(MouseButton::Right),

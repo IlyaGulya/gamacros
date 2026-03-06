@@ -63,7 +63,9 @@ impl<'a> ActionRunner<'a> {
                 let _ = self.run_shell(s);
             }
             Action::MouseClick { button, click_type } => {
-                print_info!("ACTION: MouseClick button={button:?} click_type={click_type:?}");
+                print_info!(
+                    "ACTION: MouseClick button={button:?} click_type={click_type:?}"
+                );
                 let enigo_button = match button {
                     MouseButton::Left => enigo::Button::Left,
                     MouseButton::Right => enigo::Button::Right,
@@ -71,7 +73,9 @@ impl<'a> ActionRunner<'a> {
                 };
                 let result = match click_type {
                     MouseClickType::Click => self.keypress.mouse_click(enigo_button),
-                    MouseClickType::DoubleClick => self.keypress.mouse_double_click(enigo_button),
+                    MouseClickType::DoubleClick => {
+                        self.keypress.mouse_double_click(enigo_button)
+                    }
                 };
                 match result {
                     Ok(()) => print_info!("  MouseClick OK"),
@@ -122,7 +126,9 @@ impl<'a> ActionRunner<'a> {
             #[cfg(target_os = "macos")]
             Action::RawModifierPress(key) => {
                 let keycode = key.keycode();
-                print_info!("ACTION: RawModifierPress key={key:?} keycode=0x{keycode:02x}");
+                print_info!(
+                    "ACTION: RawModifierPress key={key:?} keycode=0x{keycode:02x}"
+                );
                 match self.keypress.raw_modifier_press(keycode) {
                     Ok(()) => print_info!("  RawModifierPress OK"),
                     Err(e) => print_error!("  RawModifierPress FAILED: {e}"),
@@ -131,7 +137,9 @@ impl<'a> ActionRunner<'a> {
             #[cfg(target_os = "macos")]
             Action::RawModifierRelease(key) => {
                 let keycode = key.keycode();
-                print_info!("ACTION: RawModifierRelease key={key:?} keycode=0x{keycode:02x}");
+                print_info!(
+                    "ACTION: RawModifierRelease key={key:?} keycode=0x{keycode:02x}"
+                );
                 match self.keypress.raw_modifier_release(keycode) {
                     Ok(()) => print_info!("  RawModifierRelease OK"),
                     Err(e) => print_error!("  RawModifierRelease FAILED: {e}"),

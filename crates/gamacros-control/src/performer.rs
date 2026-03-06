@@ -1,4 +1,7 @@
-use enigo::{Axis, Button, Coordinate, Direction, Enigo, InputResult, Mouse, NewConError, Settings};
+use enigo::{
+    Axis, Button, Coordinate, Direction, Enigo, InputResult, Mouse, NewConError,
+    Settings,
+};
 
 use crate::KeyCombo;
 
@@ -30,14 +33,30 @@ mod raw_modifier {
     /// Returns (high-level CGEventFlags mask, device-specific mask) for a modifier keycode.
     fn modifier_flags(keycode: u16) -> Option<(CGEventFlags, u64)> {
         match keycode {
-            KC_CONTROL => Some((CGEventFlags::CGEventFlagControl, NX_DEVICELCTLKEYMASK)),
-            KC_RIGHT_CONTROL => Some((CGEventFlags::CGEventFlagControl, NX_DEVICERCTLKEYMASK)),
-            KC_SHIFT => Some((CGEventFlags::CGEventFlagShift, NX_DEVICELSHIFTKEYMASK)),
-            KC_RIGHT_SHIFT => Some((CGEventFlags::CGEventFlagShift, NX_DEVICERSHIFTKEYMASK)),
-            KC_COMMAND => Some((CGEventFlags::CGEventFlagCommand, NX_DEVICELCMDKEYMASK)),
-            KC_RIGHT_COMMAND => Some((CGEventFlags::CGEventFlagCommand, NX_DEVICERCMDKEYMASK)),
-            KC_OPTION => Some((CGEventFlags::CGEventFlagAlternate, NX_DEVICELALTKEYMASK)),
-            KC_RIGHT_OPTION => Some((CGEventFlags::CGEventFlagAlternate, NX_DEVICERALTKEYMASK)),
+            KC_CONTROL => {
+                Some((CGEventFlags::CGEventFlagControl, NX_DEVICELCTLKEYMASK))
+            }
+            KC_RIGHT_CONTROL => {
+                Some((CGEventFlags::CGEventFlagControl, NX_DEVICERCTLKEYMASK))
+            }
+            KC_SHIFT => {
+                Some((CGEventFlags::CGEventFlagShift, NX_DEVICELSHIFTKEYMASK))
+            }
+            KC_RIGHT_SHIFT => {
+                Some((CGEventFlags::CGEventFlagShift, NX_DEVICERSHIFTKEYMASK))
+            }
+            KC_COMMAND => {
+                Some((CGEventFlags::CGEventFlagCommand, NX_DEVICELCMDKEYMASK))
+            }
+            KC_RIGHT_COMMAND => {
+                Some((CGEventFlags::CGEventFlagCommand, NX_DEVICERCMDKEYMASK))
+            }
+            KC_OPTION => {
+                Some((CGEventFlags::CGEventFlagAlternate, NX_DEVICELALTKEYMASK))
+            }
+            KC_RIGHT_OPTION => {
+                Some((CGEventFlags::CGEventFlagAlternate, NX_DEVICERALTKEYMASK))
+            }
             _ => None,
         }
     }

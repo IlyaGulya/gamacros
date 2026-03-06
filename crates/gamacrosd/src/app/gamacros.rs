@@ -9,8 +9,8 @@ use gamacros_control::KeyCombo;
 use gamacros_bit_mask::Bitmask;
 use gamacros_gamepad::{Button, ControllerId, ControllerInfo, Axis as CtrlAxis};
 use gamacros_workspace::{
-    ButtonAction, ControllerSettings, Macros, MouseButton, MouseClickType,
-    Profile, RawModifierKey, StickRules, StickMode,
+    ButtonAction, ControllerSettings, Macros, MouseButton, MouseClickType, Profile,
+    RawModifierKey, StickRules, StickMode,
 };
 
 use crate::{app::ButtonPhase, print_debug, print_info};
@@ -24,12 +24,28 @@ pub enum Action {
     KeyTap(KeyCombo),
     Macros(Arc<Macros>),
     Shell(String),
-    MouseClick { button: MouseButton, click_type: MouseClickType },
-    MousePress { button: MouseButton },
-    MouseRelease { button: MouseButton },
-    MouseMove { dx: i32, dy: i32 },
-    Scroll { h: i32, v: i32 },
-    Rumble { id: ControllerId, ms: u32 },
+    MouseClick {
+        button: MouseButton,
+        click_type: MouseClickType,
+    },
+    MousePress {
+        button: MouseButton,
+    },
+    MouseRelease {
+        button: MouseButton,
+    },
+    MouseMove {
+        dx: i32,
+        dy: i32,
+    },
+    Scroll {
+        h: i32,
+        v: i32,
+    },
+    Rumble {
+        id: ControllerId,
+        ms: u32,
+    },
     RawModifierPress(RawModifierKey),
     RawModifierRelease(RawModifierKey),
 }
@@ -100,7 +116,11 @@ impl Gamacros {
         // Recompute stick rules for current active app (workspace may have changed)
         if !self.active_app.is_empty() {
             if let Some(ws) = self.workspace.as_ref() {
-                if let Some(app_rules) = ws.rules.get(&*self.active_app).or_else(|| ws.rules.get("common")) {
+                if let Some(app_rules) = ws
+                    .rules
+                    .get(&*self.active_app)
+                    .or_else(|| ws.rules.get("common"))
+                {
                     self.active_stick_rules =
                         Some(Arc::new(app_rules.sticks.clone()));
                     self.compiled_stick_rules = self
@@ -124,8 +144,14 @@ impl Gamacros {
             info.product_id
         );
 
-        let settings = self.workspace.as_ref()
-            .and_then(|ws| ws.controllers.get(&(info.vendor_id, info.product_id)).cloned())
+        let settings = self
+            .workspace
+            .as_ref()
+            .and_then(|ws| {
+                ws.controllers
+                    .get(&(info.vendor_id, info.product_id))
+                    .cloned()
+            })
             .unwrap_or_default();
         let state = ControllerState {
             mapping: settings,
@@ -233,14 +259,19 @@ impl Gamacros {
     }
 
     /// Process button repeat tasks due up to `now`.
-    pub fn process_button_repeats<F: FnMut(Action)>(&mut self, now: Instant, sink: &mut F) {
+    pub fn process_button_repeats<F: FnMut(Action)>(
+        &mut self,
+        now: Instant,
+        sink: &mut F,
+    ) {
         for task in self.button_repeats.values_mut() {
             if now >= task.next_fire {
                 sink(Action::KeyTap(task.key.clone()));
                 if !task.delay_done {
                     task.delay_done = true;
                 }
-                task.next_fire = now + std::time::Duration::from_millis(task.interval_ms);
+                task.next_fire =
+                    now + std::time::Duration::from_millis(task.interval_ms);
             }
         }
     }
@@ -331,7 +362,9 @@ impl Gamacros {
                     r
                 }
                 None => {
-                    print_debug!("no rules found for {active_app} and no common rules");
+                    print_debug!(
+                        "no rules found for {active_app} and no common rules"
+                    );
                     return;
                 }
             },
@@ -372,7 +405,10 @@ impl Gamacros {
             }
         }
         if max_bits == 0 {
-            print_debug!("no matching rule for pressed={now_pressed:?} (button_rules={})", app_rules.buttons.len());
+            print_debug!(
+                "no matching rule for pressed={now_pressed:?} (button_rules={})",
+                app_rules.buttons.len()
+            );
             return;
         }
         print_debug!("firing rule with max_bits={max_bits}");
@@ -398,14 +434,19 @@ impl Gamacros {
                     match rule.action.clone() {
                         ButtonAction::Keystroke(k) => {
                             sink(Action::KeyTap((*k).clone()));
-                            let delay_ms = rule.repeat_delay_ms.unwrap_or(DEFAULT_REPEAT_DELAY_MS);
-                            let interval_ms = rule.repeat_interval_ms.unwrap_or(DEFAULT_REPEAT_INTERVAL_MS);
+                            let delay_ms = rule
+                                .repeat_delay_ms
+                                .unwrap_or(DEFAULT_REPEAT_DELAY_MS);
+                            let interval_ms = rule
+                                .repeat_interval_ms
+                                .unwrap_or(DEFAULT_REPEAT_INTERVAL_MS);
                             self.button_repeats.insert(
                                 (id, button),
                                 ButtonRepeatTask {
                                     key: (*k).clone(),
                                     interval_ms,
-                                    next_fire: Instant::now() + std::time::Duration::from_millis(delay_ms),
+                                    next_fire: Instant::now()
+                                        + std::time::Duration::from_millis(delay_ms),
                                     delay_done: false,
                                 },
                             );
@@ -431,20 +472,18 @@ impl Gamacros {
                         }
                     }
                 }
-                ButtonPhase::Released => {
-                    match rule.action.clone() {
-                        ButtonAction::Keystroke(_) => {
-                            self.button_repeats.remove(&(id, button));
-                        }
-                        ButtonAction::HoldClick(btn) => {
-                            sink(Action::MouseRelease { button: btn });
-                        }
-                        ButtonAction::RawModifier(key) => {
-                            sink(Action::RawModifierRelease(key));
-                        }
-                        _ => {}
+                ButtonPhase::Released => match rule.action.clone() {
+                    ButtonAction::Keystroke(_) => {
+                        self.button_repeats.remove(&(id, button));
                     }
-                }
+                    ButtonAction::HoldClick(btn) => {
+                        sink(Action::MouseRelease { button: btn });
+                    }
+                    ButtonAction::RawModifier(key) => {
+                        sink(Action::RawModifierRelease(key));
+                    }
+                    _ => {}
+                },
             }
         }
     }

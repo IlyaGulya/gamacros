@@ -158,7 +158,10 @@ pub(crate) fn start_runtime_thread(
                     Event::ControllerButtonUp { which, button, .. } => {
                         if let Some(btn) = map_sdl_button(button) {
                             let id = which as ControllerId;
-                            if button_state.get_mut(&id).map_or(false, |s| s.remove(&btn)) {
+                            if button_state
+                                .get_mut(&id)
+                                .map_or(false, |s| s.remove(&btn))
+                            {
                                 broadcast(
                                     &inner,
                                     ControllerEvent::ButtonReleased {
@@ -295,7 +298,10 @@ pub(crate) fn start_runtime_thread(
                         Event::ControllerButtonUp { which, button, .. } => {
                             if let Some(btn) = map_sdl_button(button) {
                                 let id = which as ControllerId;
-                                if button_state.get_mut(&id).map_or(false, |s| s.remove(&btn)) {
+                                if button_state
+                                    .get_mut(&id)
+                                    .map_or(false, |s| s.remove(&btn))
+                                {
                                     broadcast(
                                         &inner,
                                         ControllerEvent::ButtonReleased {
