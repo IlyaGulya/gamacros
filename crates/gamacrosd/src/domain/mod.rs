@@ -1,5 +1,9 @@
 mod event;
+mod reduce;
 mod wake;
 
 pub use event::{DomainEvent, SystemEvent, TimerEvent};
-pub use wake::{overdue_wake_event, reschedule_wake, WakeState};
+pub use reduce::{reduce_event, DomainControl, DomainStep};
+pub use wake::{
+    apply_wake_intents, overdue_wake_event, reschedule_wake, WakeIntent, WakeState,
+};

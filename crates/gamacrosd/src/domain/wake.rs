@@ -20,6 +20,12 @@ pub struct WakePlan {
     pub next_due: Option<Instant>,
 }
 
+pub enum WakeIntent {
+    Reschedule,
+    EnableFastModeUntil(Instant),
+    DisableFastMode,
+}
+
 impl WakeState {
     pub fn new(now: Instant) -> Self {
         Self {
@@ -28,6 +34,23 @@ impl WakeState {
             fast_mode: false,
             fast_until: now,
             next_tick_due: None,
+        }
+    }
+}
+
+pub fn apply_wake_intents(wake_state: &mut WakeState, intents: Vec<WakeIntent>) {
+    for intent in intents {
+        match intent {
+            WakeIntent::Reschedule => {
+                wake_state.need_reschedule = true;
+            }
+            WakeIntent::EnableFastModeUntil(until) => {
+                wake_state.fast_mode = true;
+                wake_state.fast_until = until;
+            }
+            WakeIntent::DisableFastMode => {
+                wake_state.fast_mode = false;
+            }
         }
     }
 }
