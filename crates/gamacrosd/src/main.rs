@@ -194,6 +194,31 @@ enum EventLoopControl {
     Break,
 }
 
+struct DomainStep {
+    effects: Vec<crate::app::Effect>,
+    set_shell: Option<Option<Box<str>>>,
+    need_reschedule: bool,
+    control: EventLoopControl,
+}
+
+impl DomainStep {
+    fn continue_() -> Self {
+        Self {
+            effects: Vec::new(),
+            set_shell: None,
+            need_reschedule: false,
+            control: EventLoopControl::Continue,
+        }
+    }
+
+    fn break_() -> Self {
+        Self {
+            control: EventLoopControl::Break,
+            ..Self::continue_()
+        }
+    }
+}
+
 fn run_effects(
     action_runner: &mut ActionRunner<'_>,
     effects: Vec<crate::app::Effect>,
@@ -226,39 +251,36 @@ impl WakeState {
 fn handle_domain_event(
     event: DomainEvent,
     gamacros: &mut Gamacros,
-    action_runner: &mut ActionRunner<'_>,
     manager: &ControllerManager,
     wake_state: &mut WakeState,
-) -> EventLoopControl {
+) -> DomainStep {
+    let mut step = DomainStep::continue_();
+
     match event {
         DomainEvent::Controller(controller_event) => match controller_event {
             ControllerEvent::Connected(info) => {
                 let id = info.id;
                 if gamacros.is_known(id) {
-                    return EventLoopControl::Continue;
+                    return step;
                 }
 
                 gamacros.add_controller(info);
-                wake_state.need_reschedule = true;
+                step.need_reschedule = true;
             }
             ControllerEvent::Disconnected(id) => {
                 gamacros.remove_controller(id);
                 gamacros.on_controller_disconnected(id);
-                wake_state.need_reschedule = true;
+                step.need_reschedule = true;
             }
             ControllerEvent::ButtonPressed { id, button } => {
-                run_effects(
-                    action_runner,
-                    gamacros.on_button_effects(id, button, ButtonPhase::Pressed),
-                );
-                wake_state.need_reschedule = true;
+                step.effects =
+                    gamacros.on_button_effects(id, button, ButtonPhase::Pressed);
+                step.need_reschedule = true;
             }
             ControllerEvent::ButtonReleased { id, button } => {
-                run_effects(
-                    action_runner,
-                    gamacros.on_button_effects(id, button, ButtonPhase::Released),
-                );
-                wake_state.need_reschedule = true;
+                step.effects =
+                    gamacros.on_button_effects(id, button, ButtonPhase::Released);
+                step.need_reschedule = true;
             }
             ControllerEvent::AxisMotion { id, axis, value } => {
                 print_debug!(
@@ -266,7 +288,7 @@ fn handle_domain_event(
                 );
                 gamacros.on_axis_motion(id, axis, value);
                 if !wake_state.ticking_enabled {
-                    wake_state.need_reschedule = true;
+                    step.need_reschedule = true;
                     print_debug!(
                         "axis motion armed ticking: controller={id} axis={axis:?} value={value:.3}"
                     );
@@ -276,23 +298,23 @@ fn handle_domain_event(
         DomainEvent::Activity(activity_event) => {
             let ActivityEvent::DidActivateApplication(bundle_id) = activity_event
             else {
-                return EventLoopControl::Continue;
+                return step;
             };
             gamacros.set_active_app(&bundle_id);
-            action_runner.set_shell(gamacros.current_shell());
-            wake_state.need_reschedule = true;
+            step.set_shell = Some(gamacros.current_shell());
+            step.need_reschedule = true;
         }
         DomainEvent::Profile(profile_event) => match profile_event {
             ProfileEvent::Changed(workspace) => {
                 print_info!("profile changed, updating workspace");
                 gamacros.set_workspace(workspace);
-                action_runner.set_shell(gamacros.current_shell());
-                wake_state.need_reschedule = true;
+                step.set_shell = Some(gamacros.current_shell());
+                step.need_reschedule = true;
             }
             ProfileEvent::Removed => {
                 gamacros.remove_workspace();
-                action_runner.set_shell(gamacros.current_shell());
-                wake_state.need_reschedule = true;
+                step.set_shell = Some(gamacros.current_shell());
+                step.need_reschedule = true;
             }
             ProfileEvent::Error(error) => {
                 print_error!("profile error: {error}");
@@ -301,17 +323,15 @@ fn handle_domain_event(
         DomainEvent::Api(command) => match command {
             ApiCommand::Rumble { id, ms } => match id {
                 Some(controller_id) => {
-                    action_runner.run_effect(crate::app::Effect::Rumble {
+                    step.effects.push(crate::app::Effect::Rumble {
                         id: controller_id,
                         ms,
                     });
                 }
                 None => {
                     for info in manager.controllers() {
-                        action_runner.run_effect(crate::app::Effect::Rumble {
-                            id: info.id,
-                            ms,
-                        });
+                        step.effects
+                            .push(crate::app::Effect::Rumble { id: info.id, ms });
                     }
                 }
             },
@@ -330,7 +350,7 @@ fn handle_domain_event(
                         "wake timer: tick due lateness_us={}",
                         now.duration_since(due).as_micros()
                     );
-                    run_effects(action_runner, gamacros.on_tick_effects());
+                    step.effects.extend(gamacros.on_tick_effects());
                     if gamacros.wants_fast_tick() {
                         wake_state.fast_mode = true;
                         wake_state.fast_until = now + Duration::from_millis(250);
@@ -345,25 +365,40 @@ fn handle_domain_event(
                 }
             }
             let repeats_started_at = std::time::Instant::now();
-            run_effects(action_runner, gamacros.due_repeat_effects(now));
+            step.effects.extend(gamacros.due_repeat_effects(now));
             print_debug!(
                 "wake timer: stick repeats elapsed_us={}",
                 repeats_started_at.elapsed().as_micros()
             );
             let button_repeats_started_at = std::time::Instant::now();
-            run_effects(action_runner, gamacros.button_repeat_effects(now));
+            step.effects.extend(gamacros.button_repeat_effects(now));
             print_debug!(
                 "wake timer: button repeats elapsed_us={}",
                 button_repeats_started_at.elapsed().as_micros()
             );
-            wake_state.need_reschedule = true;
+            step.need_reschedule = true;
         }
         DomainEvent::System(SystemEvent::ShutdownRequested) => {
-            return EventLoopControl::Break;
+            return DomainStep::break_();
         }
     }
 
-    EventLoopControl::Continue
+    step
+}
+
+fn apply_domain_step(
+    step: DomainStep,
+    action_runner: &mut ActionRunner<'_>,
+    wake_state: &mut WakeState,
+) -> EventLoopControl {
+    if let Some(shell) = step.set_shell {
+        action_runner.set_shell(shell);
+    }
+    run_effects(action_runner, step.effects);
+    if step.need_reschedule {
+        wake_state.need_reschedule = true;
+    }
+    step.control
 }
 
 fn process_overdue_wake(
@@ -386,13 +421,13 @@ fn process_overdue_wake(
             stick_repeat_due,
             button_repeat_due
         );
-        return handle_domain_event(
+        let step = handle_domain_event(
             DomainEvent::Timer(TimerEvent::Wake),
             gamacros,
-            action_runner,
             manager,
             wake_state,
         );
+        return apply_domain_step(step, action_runner, wake_state);
     }
 
     EventLoopControl::Continue
@@ -521,11 +556,15 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
             loop {
                 select! {
                     recv(stop_rx) -> _ => {
-                        if let EventLoopControl::Break = handle_domain_event(
+                        let step = handle_domain_event(
                             DomainEvent::System(SystemEvent::ShutdownRequested),
                             &mut gamacros,
-                            &mut action_runner,
                             &manager,
+                            &mut wake_state,
+                        );
+                        if let EventLoopControl::Break = apply_domain_step(
+                            step,
+                            &mut action_runner,
                             &mut wake_state,
                         ) {
                             break;
@@ -534,11 +573,15 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                     recv(rx) -> msg => {
                         match msg {
                             Ok(event) => {
-                            if let EventLoopControl::Break = handle_domain_event(
+                            let step = handle_domain_event(
                                 DomainEvent::Controller(event),
                                 &mut gamacros,
-                                &mut action_runner,
                                 &manager,
+                                &mut wake_state,
+                            );
+                            if let EventLoopControl::Break = apply_domain_step(
+                                step,
+                                &mut action_runner,
                                 &mut wake_state,
                             ) {
                                 break;
@@ -560,11 +603,15 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                     }
                     recv(api_rx) -> cmd => {
                         if let Ok(command) = cmd {
-                            if let EventLoopControl::Break = handle_domain_event(
+                            let step = handle_domain_event(
                                 DomainEvent::Api(command),
                                 &mut gamacros,
-                                &mut action_runner,
                                 &manager,
+                                &mut wake_state,
+                            );
+                            if let EventLoopControl::Break = apply_domain_step(
+                                step,
+                                &mut action_runner,
                                 &mut wake_state,
                             ) {
                                 break;
@@ -572,27 +619,35 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                         }
                     }
                     recv(wake_rx) -> _ => {
-                        if let EventLoopControl::Break = handle_domain_event(
-                            DomainEvent::Timer(TimerEvent::Wake),
-                            &mut gamacros,
-                            &mut action_runner,
-                            &manager,
-                            &mut wake_state,
-                        ) {
-                            break;
-                        }
-                    }
-                }
-                while let Ok(msg) = activity_std_rx.try_recv() {
-                    if let EventLoopControl::Break = handle_domain_event(
-                        DomainEvent::Activity(msg),
+                    let step = handle_domain_event(
+                        DomainEvent::Timer(TimerEvent::Wake),
                         &mut gamacros,
-                        &mut action_runner,
                         &manager,
+                        &mut wake_state,
+                    );
+                    if let EventLoopControl::Break = apply_domain_step(
+                        step,
+                        &mut action_runner,
                         &mut wake_state,
                     ) {
                         break;
                     }
+                }
+            }
+            while let Ok(msg) = activity_std_rx.try_recv() {
+                let step = handle_domain_event(
+                    DomainEvent::Activity(msg),
+                    &mut gamacros,
+                    &manager,
+                    &mut wake_state,
+                );
+                if let EventLoopControl::Break = apply_domain_step(
+                    step,
+                    &mut action_runner,
+                    &mut wake_state,
+                ) {
+                    break;
+                }
                     if let EventLoopControl::Break = process_overdue_wake(
                         &mut gamacros,
                         &mut action_runner,
@@ -607,15 +662,19 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                 };
 
                 while let Ok(msg) = workspace_rx.try_recv() {
-                    if let EventLoopControl::Break = handle_domain_event(
-                        DomainEvent::Profile(msg),
-                        &mut gamacros,
-                        &mut action_runner,
-                        &manager,
-                        &mut wake_state,
-                    ) {
-                        break;
-                    }
+                let step = handle_domain_event(
+                    DomainEvent::Profile(msg),
+                    &mut gamacros,
+                    &manager,
+                    &mut wake_state,
+                );
+                if let EventLoopControl::Break = apply_domain_step(
+                    step,
+                    &mut action_runner,
+                    &mut wake_state,
+                ) {
+                    break;
+                }
                     if let EventLoopControl::Break = process_overdue_wake(
                         &mut gamacros,
                         &mut action_runner,
