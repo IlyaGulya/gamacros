@@ -25,7 +25,10 @@ use gamacros_workspace::{ProfileEvent, Workspace};
 use crate::api::{ApiTransport, Command as ApiCommand, UnixSocket};
 use crate::app::{ButtonPhase, Gamacros};
 use crate::cli::{Cli, Command, ControlCommand};
-use crate::domain::{DomainEvent, SystemEvent, TimerEvent};
+use crate::domain::{
+    has_overdue_work, reschedule_wake, DomainEvent, SystemEvent, TimerEvent,
+    WakeState,
+};
 use crate::runner::ActionRunner;
 
 const APP_LABEL: &str = "co.myrt.gamacros";
@@ -228,99 +231,6 @@ fn run_effects(
     }
 }
 
-struct WakeState {
-    need_reschedule: bool,
-    ticking_enabled: bool,
-    fast_mode: bool,
-    fast_until: std::time::Instant,
-    next_tick_due: Option<std::time::Instant>,
-}
-
-struct WakePlan {
-    repeat_due: Option<std::time::Instant>,
-    button_repeat_due: Option<std::time::Instant>,
-    next_due: Option<std::time::Instant>,
-}
-
-impl WakeState {
-    fn new(now: std::time::Instant) -> Self {
-        Self {
-            need_reschedule: true,
-            ticking_enabled: false,
-            fast_mode: false,
-            fast_until: now,
-            next_tick_due: None,
-        }
-    }
-}
-
-fn reschedule_wake(
-    gamacros: &Gamacros,
-    wake_state: &mut WakeState,
-    idle_period: Duration,
-    fast_period: Duration,
-) -> WakePlan {
-    let now = std::time::Instant::now();
-    if gamacros.needs_tick() {
-        let was_ticking_enabled = wake_state.ticking_enabled;
-        let previous_tick_due = wake_state.next_tick_due;
-        if !wake_state.ticking_enabled {
-            wake_state.fast_mode = gamacros.wants_fast_tick();
-            if wake_state.fast_mode {
-                wake_state.fast_until = now + Duration::from_millis(250);
-            }
-        }
-        let period = if wake_state.fast_mode {
-            if gamacros.wants_continuous_tick_mode() {
-                Duration::from_millis(gamacros.continuous_tick_ms().unwrap_or(4))
-            } else {
-                fast_period
-            }
-        } else {
-            idle_period
-        };
-        let desired_tick_due = now + period;
-        wake_state.next_tick_due = match previous_tick_due {
-            Some(existing_due) if was_ticking_enabled && existing_due > now => {
-                Some(core::cmp::min(existing_due, desired_tick_due))
-            }
-            _ => Some(desired_tick_due),
-        };
-        wake_state.ticking_enabled = true;
-        let next_tick_in = wake_state
-            .next_tick_due
-            .map(|due| due.saturating_duration_since(now).as_millis())
-            .unwrap_or_default();
-        print_debug!(
-            "wake reschedule: ticking_enabled=true fast_mode={} next_tick_in_ms={}",
-            wake_state.fast_mode,
-            next_tick_in
-        );
-    } else {
-        wake_state.next_tick_due = None;
-        wake_state.ticking_enabled = false;
-        wake_state.fast_mode = false;
-        print_debug!("wake reschedule: ticking disabled");
-    }
-
-    let repeat_due = gamacros.next_repeat_due();
-    let button_repeat_due = gamacros.next_button_repeat_due();
-    let mut next_due = wake_state.next_tick_due;
-    for candidate in [repeat_due, button_repeat_due] {
-        next_due = match (next_due, candidate) {
-            (Some(a), Some(b)) => Some(core::cmp::min(a, b)),
-            (Some(a), None) => Some(a),
-            (None, b) => b,
-        };
-    }
-
-    WakePlan {
-        repeat_due,
-        button_repeat_due,
-        next_due,
-    }
-}
-
 fn handle_domain_event(
     event: DomainEvent,
     gamacros: &mut Gamacros,
@@ -487,7 +397,7 @@ fn process_overdue_wake(
         .next_button_repeat_due()
         .is_some_and(|due| due <= now);
 
-    if tick_due || stick_repeat_due || button_repeat_due {
+    if has_overdue_work(gamacros, wake_state, now) {
         print_debug!(
             "processing overdue wake: tick_due={} stick_repeat_due={} button_repeat_due={}",
             tick_due,
