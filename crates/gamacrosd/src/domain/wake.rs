@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 use colored::Colorize;
 
 use crate::app::Gamacros;
+use crate::domain::{DomainEvent, TimerEvent};
 use crate::print_debug;
 
 pub struct WakeState {
@@ -108,4 +109,28 @@ pub fn has_overdue_work(
         || gamacros
             .next_button_repeat_due()
             .is_some_and(|due| due <= now)
+}
+
+pub fn overdue_wake_event(
+    gamacros: &Gamacros,
+    wake_state: &WakeState,
+    now: Instant,
+) -> Option<DomainEvent> {
+    let tick_due = wake_state.next_tick_due.is_some_and(|due| due <= now);
+    let stick_repeat_due = gamacros.next_repeat_due().is_some_and(|due| due <= now);
+    let button_repeat_due = gamacros
+        .next_button_repeat_due()
+        .is_some_and(|due| due <= now);
+
+    if has_overdue_work(gamacros, wake_state, now) {
+        print_debug!(
+            "processing overdue wake: tick_due={} stick_repeat_due={} button_repeat_due={}",
+            tick_due,
+            stick_repeat_due,
+            button_repeat_due
+        );
+        Some(DomainEvent::Timer(TimerEvent::Wake))
+    } else {
+        None
+    }
 }

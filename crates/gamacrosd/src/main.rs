@@ -26,7 +26,7 @@ use crate::api::{ApiTransport, Command as ApiCommand, UnixSocket};
 use crate::app::{ButtonPhase, Gamacros};
 use crate::cli::{Cli, Command, ControlCommand};
 use crate::domain::{
-    has_overdue_work, reschedule_wake, DomainEvent, SystemEvent, TimerEvent,
+    overdue_wake_event, reschedule_wake, DomainEvent, SystemEvent, TimerEvent,
     WakeState,
 };
 use crate::runner::ActionRunner;
@@ -390,30 +390,40 @@ fn process_overdue_wake(
     manager: &ControllerManager,
     wake_state: &mut WakeState,
 ) -> EventLoopControl {
-    let now = std::time::Instant::now();
-    let tick_due = wake_state.next_tick_due.is_some_and(|due| due <= now);
-    let stick_repeat_due = gamacros.next_repeat_due().is_some_and(|due| due <= now);
-    let button_repeat_due = gamacros
-        .next_button_repeat_due()
-        .is_some_and(|due| due <= now);
+    let Some(event) =
+        overdue_wake_event(gamacros, wake_state, std::time::Instant::now())
+    else {
+        return EventLoopControl::Continue;
+    };
 
-    if has_overdue_work(gamacros, wake_state, now) {
-        print_debug!(
-            "processing overdue wake: tick_due={} stick_repeat_due={} button_repeat_due={}",
-            tick_due,
-            stick_repeat_due,
-            button_repeat_due
-        );
-        let step = handle_domain_event(
-            DomainEvent::Timer(TimerEvent::Wake),
-            gamacros,
-            manager,
-            wake_state,
-        );
-        return apply_domain_step(step, action_runner, wake_state);
+    let step = handle_domain_event(event, gamacros, manager, wake_state);
+    apply_domain_step(step, action_runner, wake_state)
+}
+
+fn dispatch_domain_event(
+    event: DomainEvent,
+    gamacros: &mut Gamacros,
+    action_runner: &mut ActionRunner<'_>,
+    manager: &ControllerManager,
+    wake_state: &mut WakeState,
+) -> EventLoopControl {
+    let step = handle_domain_event(event, gamacros, manager, wake_state);
+    apply_domain_step(step, action_runner, wake_state)
+}
+
+fn dispatch_and_process_overdue(
+    event: DomainEvent,
+    gamacros: &mut Gamacros,
+    action_runner: &mut ActionRunner<'_>,
+    manager: &ControllerManager,
+    wake_state: &mut WakeState,
+) -> EventLoopControl {
+    let control =
+        dispatch_domain_event(event, gamacros, action_runner, manager, wake_state);
+    if let EventLoopControl::Break = control {
+        return EventLoopControl::Break;
     }
-
-    EventLoopControl::Continue
+    process_overdue_wake(gamacros, action_runner, manager, wake_state)
 }
 
 fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
@@ -538,38 +548,22 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
             );
             loop {
                 select! {
-                    recv(stop_rx) -> _ => {
-                        let step = handle_domain_event(
+                recv(stop_rx) -> _ => {
+                        if let EventLoopControl::Break = dispatch_domain_event(
                             DomainEvent::System(SystemEvent::ShutdownRequested),
                             &mut gamacros,
-                            &manager,
-                            &mut wake_state,
-                        );
-                        if let EventLoopControl::Break = apply_domain_step(
-                            step,
                             &mut action_runner,
+                            &manager,
                             &mut wake_state,
                         ) {
                             break;
                         }
-                    }
-                    recv(rx) -> msg => {
-                        match msg {
-                            Ok(event) => {
-                            let step = handle_domain_event(
+                }
+                recv(rx) -> msg => {
+                    match msg {
+                        Ok(event) => {
+                            if let EventLoopControl::Break = dispatch_and_process_overdue(
                                 DomainEvent::Controller(event),
-                                &mut gamacros,
-                                &manager,
-                                &mut wake_state,
-                            );
-                            if let EventLoopControl::Break = apply_domain_step(
-                                step,
-                                &mut action_runner,
-                                &mut wake_state,
-                            ) {
-                                break;
-                            }
-                            if let EventLoopControl::Break = process_overdue_wake(
                                 &mut gamacros,
                                 &mut action_runner,
                                 &manager,
@@ -584,33 +578,25 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                             }
                         }
                     }
-                    recv(api_rx) -> cmd => {
+                recv(api_rx) -> cmd => {
                         if let Ok(command) = cmd {
-                            let step = handle_domain_event(
+                            if let EventLoopControl::Break = dispatch_domain_event(
                                 DomainEvent::Api(command),
                                 &mut gamacros,
-                                &manager,
-                                &mut wake_state,
-                            );
-                            if let EventLoopControl::Break = apply_domain_step(
-                                step,
                                 &mut action_runner,
+                                &manager,
                                 &mut wake_state,
                             ) {
                                 break;
                             }
                         }
-                    }
-                    recv(wake_rx) -> _ => {
-                    let step = handle_domain_event(
+                }
+                recv(wake_rx) -> _ => {
+                    if let EventLoopControl::Break = dispatch_domain_event(
                         DomainEvent::Timer(TimerEvent::Wake),
                         &mut gamacros,
-                        &manager,
-                        &mut wake_state,
-                    );
-                    if let EventLoopControl::Break = apply_domain_step(
-                        step,
                         &mut action_runner,
+                        &manager,
                         &mut wake_state,
                     ) {
                         break;
@@ -618,54 +604,30 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                 }
             }
             while let Ok(msg) = activity_std_rx.try_recv() {
-                let step = handle_domain_event(
+                if let EventLoopControl::Break = dispatch_and_process_overdue(
                     DomainEvent::Activity(msg),
                     &mut gamacros,
-                    &manager,
-                    &mut wake_state,
-                );
-                if let EventLoopControl::Break = apply_domain_step(
-                    step,
                     &mut action_runner,
+                    &manager,
                     &mut wake_state,
                 ) {
                     break;
                 }
-                    if let EventLoopControl::Break = process_overdue_wake(
-                        &mut gamacros,
-                        &mut action_runner,
-                        &manager,
-                        &mut wake_state,
-                    ) {
-                        break;
-                    }
-                }
+            }
                 let Some(workspace_rx) = maybe_workspace_rx.as_ref() else {
                     continue;
                 };
 
                 while let Ok(msg) = workspace_rx.try_recv() {
-                let step = handle_domain_event(
+                if let EventLoopControl::Break = dispatch_and_process_overdue(
                     DomainEvent::Profile(msg),
                     &mut gamacros,
-                    &manager,
-                    &mut wake_state,
-                );
-                if let EventLoopControl::Break = apply_domain_step(
-                    step,
                     &mut action_runner,
+                    &manager,
                     &mut wake_state,
                 ) {
                     break;
                 }
-                    if let EventLoopControl::Break = process_overdue_wake(
-                        &mut gamacros,
-                        &mut action_runner,
-                        &manager,
-                        &mut wake_state,
-                    ) {
-                        break;
-                    }
                 }
                 if wake_state.need_reschedule {
                     let now = std::time::Instant::now();
