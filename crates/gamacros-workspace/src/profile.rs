@@ -211,4 +211,15 @@ pub struct ScrollParams {
     pub horizontal: bool,
     pub invert_x: bool,
     pub invert_y: bool,
+    pub runtime: ScrollRuntimeParams,
+}
+
+/// Runtime tuning parameters for scroll mode.
+#[derive(Debug, Clone)]
+pub struct ScrollRuntimeParams {
+    pub tick_ms: u64,
+    pub smoothing_window_ms: u64,
+    pub gamma: f32,
+    pub trigger_boost_max: f32,
+    pub trigger_boost_gamma: f32,
 }

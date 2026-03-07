@@ -98,4 +98,8 @@ pub(crate) struct ProfileV1Stick {
     pub speed_lines_s: Option<f32>,
     #[serde(default)]
     pub horizontal: Option<bool>,
+    #[serde(default)]
+    pub trigger_boost_max: Option<f32>,
+    #[serde(default)]
+    pub trigger_boost_gamma: Option<f32>,
 }

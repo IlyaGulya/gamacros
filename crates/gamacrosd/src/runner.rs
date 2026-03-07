@@ -110,12 +110,28 @@ impl<'a> ActionRunner<'a> {
                 let _ = self.keypress.mouse_move(dx, dy);
             }
             Effect::Scroll { h, v } => {
-                if h != 0 {
-                    let _ = self.keypress.scroll_x(h);
+                let started_at = std::time::Instant::now();
+                print_info!("ACTION: Scroll h={h:.3} v={v:.3}");
+                if h != 0.0 {
+                    match self.keypress.scroll_x(h) {
+                        Ok(()) => print_info!("  ScrollX OK value={h:.3}"),
+                        Err(e) => {
+                            print_error!("  ScrollX FAILED value={h:.3}: {e:?}")
+                        }
+                    }
                 }
-                if v != 0 {
-                    let _ = self.keypress.scroll_y(v);
+                if v != 0.0 {
+                    match self.keypress.scroll_y(v) {
+                        Ok(()) => print_info!("  ScrollY OK value={v:.3}"),
+                        Err(e) => {
+                            print_error!("  ScrollY FAILED value={v:.3}: {e:?}")
+                        }
+                    }
                 }
+                print_info!(
+                    "  Scroll elapsed_us={} ",
+                    started_at.elapsed().as_micros()
+                );
             }
             Effect::Rumble { id, ms } => {
                 print_info!("ACTION: Rumble id={id} ms={ms}");

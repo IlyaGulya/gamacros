@@ -102,6 +102,84 @@ mod raw_modifier {
     }
 }
 
+#[cfg(target_os = "macos")]
+mod smooth_scroll {
+    use core_graphics::event::{
+        CGEvent, CGEventTapLocation, EventField, ScrollEventUnit,
+    };
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+
+    use enigo::{Axis, InputError, InputResult};
+    use log::info;
+    use std::time::Instant;
+
+    pub fn post(axis: Axis, value: f64) -> InputResult<()> {
+        let started_at = Instant::now();
+        let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
+            .map_err(|_| InputError::Simulate("failed to create scroll source"))?;
+        let Ok(event) =
+            CGEvent::new_scroll_event(source, ScrollEventUnit::PIXEL, 2, 0, 0, 0)
+        else {
+            return Err(InputError::Simulate("failed creating smooth scroll event"));
+        };
+
+        let fixed_value = (value * 65536.0).round() as i64;
+        let point_value = value.round() as i64;
+        let (
+            delta_axis_1,
+            delta_axis_2,
+            fixed_axis_1,
+            fixed_axis_2,
+            point_axis_1,
+            point_axis_2,
+        ) = match axis {
+            Axis::Vertical => (0, 0, fixed_value, 0, point_value, 0),
+            Axis::Horizontal => (0, 0, 0, fixed_value, 0, point_value),
+        };
+
+        info!(
+            "[smooth_scroll] axis={axis:?} input={value:.3} delta1={} delta2={} fixed1={} fixed2={} point1={} point2={}",
+            delta_axis_1,
+            delta_axis_2,
+            fixed_axis_1,
+            fixed_axis_2,
+            point_axis_1,
+            point_axis_2
+        );
+
+        event.set_integer_value_field(
+            EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_1,
+            delta_axis_1,
+        );
+        event.set_integer_value_field(
+            EventField::SCROLL_WHEEL_EVENT_DELTA_AXIS_2,
+            delta_axis_2,
+        );
+        event.set_integer_value_field(
+            EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_1,
+            fixed_axis_1,
+        );
+        event.set_integer_value_field(
+            EventField::SCROLL_WHEEL_EVENT_FIXED_POINT_DELTA_AXIS_2,
+            fixed_axis_2,
+        );
+        event.set_integer_value_field(
+            EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_1,
+            point_axis_1,
+        );
+        event.set_integer_value_field(
+            EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2,
+            point_axis_2,
+        );
+        event.post(CGEventTapLocation::HID);
+        info!(
+            "[smooth_scroll] posted axis={axis:?} input={value:.3} elapsed_us={}",
+            started_at.elapsed().as_micros()
+        );
+        Ok(())
+    }
+}
+
 pub struct Performer {
     enigo: Enigo,
 }
@@ -144,26 +222,26 @@ impl Performer {
     /// Scroll horizontally.
     /// Uses macOS specific smooth scrolling.
     #[cfg(target_os = "macos")]
-    pub fn scroll_x(&mut self, value: i32) -> InputResult<()> {
-        self.enigo.smooth_scroll(value, Axis::Horizontal)
+    pub fn scroll_x(&mut self, value: f64) -> InputResult<()> {
+        smooth_scroll::post(Axis::Horizontal, value)
     }
 
     /// Scroll vertically.
     /// Uses macOS specific smooth scrolling.
     #[cfg(target_os = "macos")]
-    pub fn scroll_y(&mut self, value: i32) -> InputResult<()> {
-        self.enigo.smooth_scroll(value, Axis::Vertical)
+    pub fn scroll_y(&mut self, value: f64) -> InputResult<()> {
+        smooth_scroll::post(Axis::Vertical, value)
     }
 
     /// Fallback for non-macOS systems
     #[cfg(not(target_os = "macos"))]
-    pub fn scroll_x(&mut self, value: i32) -> InputResult<()> {
-        self.enigo.scroll(value, Axis::Horizontal)
+    pub fn scroll_x(&mut self, value: f64) -> InputResult<()> {
+        self.enigo.scroll(value.round() as i32, Axis::Horizontal)
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn scroll_y(&mut self, value: i32) -> InputResult<()> {
-        self.enigo.scroll(value, Axis::Vertical)
+    pub fn scroll_y(&mut self, value: f64) -> InputResult<()> {
+        self.enigo.scroll(value.round() as i32, Axis::Vertical)
     }
 
     /// Click a mouse button.

@@ -324,21 +324,26 @@ impl Gamacros {
         fast
     }
 
-    pub fn wants_ultra_fast_tick(&self) -> bool {
-        self.has_mouse_move_mode() && self.has_axis_activity(0.05)
+    pub fn wants_continuous_tick_mode(&self) -> bool {
+        self.has_continuous_stick_mode() && self.has_axis_activity(0.05)
     }
 
-    pub fn mouse_move_tick_ms(&self) -> Option<u64> {
+    pub fn continuous_tick_ms(&self) -> Option<u64> {
         let bindings = self.get_compiled_stick_rules()?;
         let mut tick_ms: Option<u64> = None;
 
         for side in [bindings.left(), bindings.right()] {
-            let Some(StickMode::MouseMove(params)) = side else {
+            let candidate_tick_ms = match side {
+                Some(StickMode::MouseMove(params)) => Some(params.runtime.tick_ms),
+                Some(StickMode::Scroll(params)) => Some(params.runtime.tick_ms),
+                _ => None,
+            };
+            let Some(candidate_tick_ms) = candidate_tick_ms else {
                 continue;
             };
             tick_ms = Some(match tick_ms {
-                Some(current_tick_ms) => current_tick_ms.min(params.runtime.tick_ms),
-                None => params.runtime.tick_ms,
+                Some(current_tick_ms) => current_tick_ms.min(candidate_tick_ms),
+                None => candidate_tick_ms,
             });
         }
 
@@ -371,17 +376,17 @@ impl Gamacros {
         )
     }
 
-    fn has_mouse_move_mode(&self) -> bool {
+    fn has_continuous_stick_mode(&self) -> bool {
         let Some(bindings) = self.binding.stick_rules() else {
             return false;
         };
 
         matches!(
             bindings.get(&gamacros_workspace::StickSide::Left),
-            Some(StickMode::MouseMove(_))
+            Some(StickMode::MouseMove(_)) | Some(StickMode::Scroll(_))
         ) || matches!(
             bindings.get(&gamacros_workspace::StickSide::Right),
-            Some(StickMode::MouseMove(_))
+            Some(StickMode::MouseMove(_)) | Some(StickMode::Scroll(_))
         )
     }
 

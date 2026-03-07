@@ -6,7 +6,6 @@ use enigo::{
     Direction::{Click, Press, Release},
     Enigo, InputResult, Keyboard,
 };
-use log;
 use smallvec::SmallVec;
 use serde::{
     de::{value::Error as DeError, IntoDeserializer},
@@ -261,7 +260,7 @@ mod tests {
     #[test]
     fn test_invalid_modifier() {
         let err = parse("ctrl+foo").unwrap_err();
-        assert!(err.contains("Invalid key: foo"));
+        assert!(err.contains("Invalid key 'foo' in combo 'ctrl+foo'"));
     }
 
     #[test]

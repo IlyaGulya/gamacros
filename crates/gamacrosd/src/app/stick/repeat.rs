@@ -39,6 +39,7 @@ pub(super) struct ControllerRepeatState {
 pub(super) struct SideRepeatState {
     pub(super) mouse_filtered: (f32, f32),
     pub(super) mouse_accum: (f32, f32),
+    pub(super) scroll_filtered: (f32, f32),
     pub(super) scroll_accum: (f32, f32),
     pub(super) arrows: [Option<RepeatTaskState>; 4],
     pub(super) volume: [Option<RepeatTaskState>; 4],

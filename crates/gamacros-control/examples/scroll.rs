@@ -32,14 +32,14 @@ fn main() {
     };
 
     if x != 0 {
-        if let Err(err) = performer.scroll_x(x) {
+        if let Err(err) = performer.scroll_x(f64::from(x)) {
             eprintln!("Failed to scroll horizontally by {x}: {err}");
             std::process::exit(1);
         }
     }
 
     if y != 0 {
-        if let Err(err) = performer.scroll_y(y) {
+        if let Err(err) = performer.scroll_y(f64::from(y)) {
             eprintln!("Failed to scroll vertically by {y}: {err}");
             std::process::exit(1);
         }

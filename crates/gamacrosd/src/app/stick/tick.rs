@@ -12,6 +12,20 @@ use super::util::{
     axis_index, axes_for_side, invert_xy, magnitude2d, normalize_after_deadzone,
 };
 
+#[inline]
+fn trigger_scroll_boost(
+    axes: [f32; 6],
+    params: &gamacros_workspace::ScrollParams,
+) -> (f32, f32) {
+    let lt = axes[axis_index(gamacros_gamepad::Axis::LeftTrigger)].max(0.0);
+    let rt = axes[axis_index(gamacros_gamepad::Axis::RightTrigger)].max(0.0);
+    let trigger = lt.max(rt).clamp(0.0, 1.0);
+    let boost = 1.0
+        + params.runtime.trigger_boost_max
+            * trigger.powf(params.runtime.trigger_boost_gamma);
+    (trigger, boost)
+}
+
 impl StickProcessor {
     pub fn on_tick_with<F: FnMut(Effect)>(
         &mut self,
@@ -425,80 +439,110 @@ impl StickProcessor {
     ) {
         for (cid, axes) in axes_list.iter().cloned() {
             if let Some(StickMode::Scroll(params)) = bindings.left() {
-                let (x0, y0) = axes_for_side(axes, &StickSide::Left);
-                let (mut x, y) =
-                    invert_xy(x0, y0, params.invert_x, !params.invert_y);
-                if !params.horizontal {
-                    x = 0.0;
-                }
-                let mag_raw = x.abs().max(y.abs());
-                if mag_raw > params.deadzone {
-                    let sidx = super::util::side_index(&StickSide::Left);
-                    let accum = &mut self.controllers.entry(cid).or_default().sides
-                        [sidx]
-                        .scroll_accum;
-                    accum.0 += params.speed_lines_s * x * dt_s;
-                    accum.1 += params.speed_lines_s * y * dt_s;
-                    let h = accum.0.round() as i32;
-                    let v = accum.1.round() as i32;
-                    if h != 0 {
-                        print_debug!(
-                            "stick scroll: controller={cid} side=Left raw=({x0:.3},{y0:.3}) adjusted=({x:.3},{y:.3}) accum=({:.3},{:.3}) emit_h={h}",
-                            accum.0,
-                            accum.1
-                        );
-                        (sink)(Effect::Scroll { h, v: 0 });
-                        accum.0 -= h as f32;
-                    }
-                    if v != 0 {
-                        print_debug!(
-                            "stick scroll: controller={cid} side=Left raw=({x0:.3},{y0:.3}) adjusted=({x:.3},{y:.3}) accum=({:.3},{:.3}) emit_v={v}",
-                            accum.0,
-                            accum.1
-                        );
-                        (sink)(Effect::Scroll { h: 0, v });
-                        accum.1 -= v as f32;
-                    }
-                }
+                self.tick_scroll_side(
+                    cid,
+                    axes,
+                    StickSide::Left,
+                    params,
+                    dt_s,
+                    sink,
+                );
             }
             if let Some(StickMode::Scroll(params)) = bindings.right() {
-                let (x0, y0) = axes_for_side(axes, &StickSide::Right);
-                let (mut x, y) =
-                    invert_xy(x0, y0, params.invert_x, !params.invert_y);
-                if !params.horizontal {
-                    x = 0.0;
-                }
-                let mag_raw = x.abs().max(y.abs());
-                if mag_raw > params.deadzone {
-                    let sidx = super::util::side_index(&StickSide::Right);
-                    let accum = &mut self.controllers.entry(cid).or_default().sides
-                        [sidx]
-                        .scroll_accum;
-                    accum.0 += params.speed_lines_s * x * dt_s;
-                    accum.1 += params.speed_lines_s * y * dt_s;
-                    let h = accum.0.round() as i32;
-                    let v = accum.1.round() as i32;
-                    if h != 0 {
-                        print_debug!(
-                            "stick scroll: controller={cid} side=Right raw=({x0:.3},{y0:.3}) adjusted=({x:.3},{y:.3}) accum=({:.3},{:.3}) emit_h={h}",
-                            accum.0,
-                            accum.1
-                        );
-                        (sink)(Effect::Scroll { h, v: 0 });
-                        accum.0 -= h as f32;
-                    }
-                    if v != 0 {
-                        print_debug!(
-                            "stick scroll: controller={cid} side=Right raw=({x0:.3},{y0:.3}) adjusted=({x:.3},{y:.3}) accum=({:.3},{:.3}) emit_v={v}",
-                            accum.0,
-                            accum.1
-                        );
-                        (sink)(Effect::Scroll { h: 0, v });
-                        accum.1 -= v as f32;
-                    }
-                }
+                self.tick_scroll_side(
+                    cid,
+                    axes,
+                    StickSide::Right,
+                    params,
+                    dt_s,
+                    sink,
+                );
             }
         }
+    }
+
+    fn tick_scroll_side(
+        &mut self,
+        cid: ControllerId,
+        axes: [f32; 6],
+        side: StickSide,
+        params: &gamacros_workspace::ScrollParams,
+        dt_s: f32,
+        sink: &mut impl FnMut(Effect),
+    ) {
+        let started_at = std::time::Instant::now();
+        let alpha =
+            Self::mouse_smoothing_alpha(dt_s, params.runtime.smoothing_window_ms);
+        let side_label = match side {
+            StickSide::Left => "Left",
+            StickSide::Right => "Right",
+        };
+        let (x0, y0) = axes_for_side(axes, &side);
+        let (raw_x, raw_y) = invert_xy(x0, y0, params.invert_x, params.invert_y);
+        let sidx = super::util::side_index(&side);
+        let side_state = &mut self.controllers.entry(cid).or_default().sides[sidx];
+        side_state.scroll_filtered.0 +=
+            alpha * (raw_x - side_state.scroll_filtered.0);
+        side_state.scroll_filtered.1 +=
+            alpha * (raw_y - side_state.scroll_filtered.1);
+        let mut x = side_state.scroll_filtered.0;
+        let y = side_state.scroll_filtered.1;
+        if !params.horizontal {
+            x = 0.0;
+        }
+        let mag_raw = x.abs().max(y.abs());
+        if mag_raw <= params.deadzone {
+            side_state.scroll_filtered = (0.0, 0.0);
+            side_state.scroll_accum = (0.0, 0.0);
+            return;
+        }
+
+        let base = normalize_after_deadzone(mag_raw, params.deadzone);
+        let mag = Self::fast_gamma(base, params.runtime.gamma);
+        if mag <= 0.0 {
+            return;
+        }
+
+        let scale = mag / mag_raw;
+        let sx = x * scale;
+        let sy = y * scale;
+        let (trigger, trigger_boost) = trigger_scroll_boost(axes, params);
+        print_debug!(
+            "scroll pipeline: controller={cid} side={side_label} dt_s={dt_s:.4} raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag_raw={mag_raw:.3} base={base:.3} gamma={} mag={mag:.3} scale={scale:.3} speed_lines_s={} alpha={alpha:.3} trigger={trigger:.3} trigger_boost={trigger_boost:.3}",
+            params.runtime.gamma,
+            params.speed_lines_s
+        );
+        let accum = &mut side_state.scroll_accum;
+        const SCROLL_SPEED_MULTIPLIER: f32 = 6.0;
+        let speed = params.speed_lines_s * SCROLL_SPEED_MULTIPLIER * trigger_boost;
+        accum.0 += speed * sx * dt_s;
+        accum.1 += speed * sy * dt_s;
+        let h = f64::from(accum.0);
+        let v = f64::from(accum.1);
+        if h.abs() >= 0.01 {
+            print_debug!(
+                "stick scroll: controller={cid} side={side_label} raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag={mag:.3} accum=({:.3},{:.3}) emit_h={h}",
+                accum.0,
+                accum.1
+            );
+            (sink)(Effect::Scroll { h, v: 0.0 });
+            accum.0 = 0.0;
+        }
+        if v.abs() >= 0.01 {
+            print_debug!(
+                "stick scroll: controller={cid} side={side_label} raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag={mag:.3} accum=({:.3},{:.3}) emit_v={v}",
+                accum.0,
+                accum.1
+            );
+            (sink)(Effect::Scroll { h: 0.0, v });
+            accum.1 = 0.0;
+        }
+        print_debug!(
+            "scroll pipeline done: controller={cid} side={side_label} elapsed_us={} remaining_accum=({:.3},{:.3})",
+            started_at.elapsed().as_micros(),
+            accum.0,
+            accum.1
+        );
     }
 
     #[inline]

@@ -236,6 +236,12 @@ struct WakeState {
     next_tick_due: Option<std::time::Instant>,
 }
 
+struct WakePlan {
+    repeat_due: Option<std::time::Instant>,
+    button_repeat_due: Option<std::time::Instant>,
+    next_due: Option<std::time::Instant>,
+}
+
 impl WakeState {
     fn new(now: std::time::Instant) -> Self {
         Self {
@@ -245,6 +251,73 @@ impl WakeState {
             fast_until: now,
             next_tick_due: None,
         }
+    }
+}
+
+fn reschedule_wake(
+    gamacros: &Gamacros,
+    wake_state: &mut WakeState,
+    idle_period: Duration,
+    fast_period: Duration,
+) -> WakePlan {
+    let now = std::time::Instant::now();
+    if gamacros.needs_tick() {
+        let was_ticking_enabled = wake_state.ticking_enabled;
+        let previous_tick_due = wake_state.next_tick_due;
+        if !wake_state.ticking_enabled {
+            wake_state.fast_mode = gamacros.wants_fast_tick();
+            if wake_state.fast_mode {
+                wake_state.fast_until = now + Duration::from_millis(250);
+            }
+        }
+        let period = if wake_state.fast_mode {
+            if gamacros.wants_continuous_tick_mode() {
+                Duration::from_millis(gamacros.continuous_tick_ms().unwrap_or(4))
+            } else {
+                fast_period
+            }
+        } else {
+            idle_period
+        };
+        let desired_tick_due = now + period;
+        wake_state.next_tick_due = match previous_tick_due {
+            Some(existing_due) if was_ticking_enabled && existing_due > now => {
+                Some(core::cmp::min(existing_due, desired_tick_due))
+            }
+            _ => Some(desired_tick_due),
+        };
+        wake_state.ticking_enabled = true;
+        let next_tick_in = wake_state
+            .next_tick_due
+            .map(|due| due.saturating_duration_since(now).as_millis())
+            .unwrap_or_default();
+        print_debug!(
+            "wake reschedule: ticking_enabled=true fast_mode={} next_tick_in_ms={}",
+            wake_state.fast_mode,
+            next_tick_in
+        );
+    } else {
+        wake_state.next_tick_due = None;
+        wake_state.ticking_enabled = false;
+        wake_state.fast_mode = false;
+        print_debug!("wake reschedule: ticking disabled");
+    }
+
+    let repeat_due = gamacros.next_repeat_due();
+    let button_repeat_due = gamacros.next_button_repeat_due();
+    let mut next_due = wake_state.next_tick_due;
+    for candidate in [repeat_due, button_repeat_due] {
+        next_due = match (next_due, candidate) {
+            (Some(a), Some(b)) => Some(core::cmp::min(a, b)),
+            (Some(a), None) => Some(a),
+            (None, b) => b,
+        };
+    }
+
+    WakePlan {
+        repeat_due,
+        button_repeat_due,
+        next_due,
     }
 }
 
@@ -686,72 +759,20 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                 }
                 if wake_state.need_reschedule {
                     let now = std::time::Instant::now();
-                    // Recompute next tick due
-                    if gamacros.needs_tick() {
-                        let was_ticking_enabled = wake_state.ticking_enabled;
-                        let previous_tick_due = wake_state.next_tick_due;
-                        if !wake_state.ticking_enabled {
-                            wake_state.fast_mode = gamacros.wants_fast_tick();
-                            if wake_state.fast_mode {
-                                wake_state.fast_until =
-                                    now + Duration::from_millis(250);
-                            }
-                        }
-                        let period = if wake_state.fast_mode {
-                            if gamacros.wants_ultra_fast_tick() {
-                                Duration::from_millis(
-                                    gamacros.mouse_move_tick_ms().unwrap_or(4),
-                                )
-                            } else {
-                                fast_period
-                            }
-                        } else {
-                            idle_period
-                        };
-                        let desired_tick_due = now + period;
-                        wake_state.next_tick_due = match previous_tick_due {
-                            Some(existing_due)
-                                if was_ticking_enabled && existing_due > now =>
-                            {
-                                Some(core::cmp::min(existing_due, desired_tick_due))
-                            }
-                            _ => Some(desired_tick_due),
-                        };
-                        wake_state.ticking_enabled = true;
-                        let next_tick_in = wake_state
-                            .next_tick_due
-                            .map(|due| due.saturating_duration_since(now).as_millis())
-                            .unwrap_or_default();
-                        print_debug!(
-                            "wake reschedule: ticking_enabled=true fast_mode={} next_tick_in_ms={}",
-                            wake_state.fast_mode,
-                            next_tick_in
-                        );
-                    } else {
-                        wake_state.next_tick_due = None;
-                        wake_state.ticking_enabled = false;
-                        wake_state.fast_mode = false;
-                        print_debug!("wake reschedule: ticking disabled");
-                    }
-                    // Recompute next repeat due (sticks + buttons)
-                    let repeat_due = gamacros.next_repeat_due();
-                    let button_repeat_due = gamacros.next_button_repeat_due();
-
-                    // Arm single wake for the earliest deadline
-                    let mut next_due = wake_state.next_tick_due;
-                    for candidate in [repeat_due, button_repeat_due] {
-                        next_due = match (next_due, candidate) {
-                            (Some(a), Some(b)) => Some(core::cmp::min(a, b)),
-                            (Some(a), None) => Some(a),
-                            (None, b) => b,
-                        };
-                    }
-                    if let Some(due) = next_due {
+                    let wake_plan = reschedule_wake(
+                        &gamacros,
+                        &mut wake_state,
+                        idle_period,
+                        fast_period,
+                    );
+                    if let Some(due) = wake_plan.next_due {
                         let dur = if due > now { due - now } else { Duration::ZERO };
                         print_debug!(
-                            "wake arm: next_due={due:?} in_ms={} tick_due={:?} stick_repeat_due={repeat_due:?} button_repeat_due={button_repeat_due:?}",
+                            "wake arm: next_due={due:?} in_ms={} tick_due={:?} stick_repeat_due={:?} button_repeat_due={:?}",
                             dur.as_millis(),
-                            wake_state.next_tick_due
+                            wake_state.next_tick_due,
+                            wake_plan.repeat_due,
+                            wake_plan.button_repeat_due
                         );
                         wake_rx = crossbeam_channel::after(dur);
                     } else {

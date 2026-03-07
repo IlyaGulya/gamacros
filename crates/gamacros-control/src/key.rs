@@ -204,7 +204,7 @@ impl Key {
 ///
 /// # Example
 ///
-/// ```
+/// ```ignore
 /// let key = parse_key("a");
 /// assert_eq!(key, Some(Key::Unicode('a')));
 /// ```

@@ -26,8 +26,8 @@ pub enum Effect {
         dy: i32,
     },
     Scroll {
-        h: i32,
-        v: i32,
+        h: f64,
+        v: f64,
     },
     Rumble {
         id: ControllerId,
