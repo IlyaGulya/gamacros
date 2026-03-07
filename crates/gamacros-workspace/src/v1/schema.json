@@ -141,6 +141,8 @@
         "deadzone": { "type": "number", "minimum": 0 },
         "max_speed_px_s": { "type": "number", "minimum": 0 },
         "gamma": { "type": "number", "minimum": 0 },
+        "tick_ms": { "type": "integer", "minimum": 0 },
+        "smoothing_window_ms": { "type": "integer", "minimum": 0 },
         "invert_x": { "type": "boolean" },
         "invert_y": { "type": "boolean" }
       }
@@ -153,6 +155,11 @@
         "mode": { "const": "scroll" },
         "deadzone": { "type": "number", "minimum": 0 },
         "speed_lines_s": { "type": "number", "minimum": 0 },
+        "gamma": { "type": "number", "minimum": 0 },
+        "tick_ms": { "type": "integer", "minimum": 0 },
+        "smoothing_window_ms": { "type": "integer", "minimum": 0 },
+        "trigger_boost_max": { "type": "number", "minimum": 0 },
+        "trigger_boost_gamma": { "type": "number", "minimum": 0 },
         "horizontal": { "type": "boolean" },
         "invert_x": { "type": "boolean" },
         "invert_y": { "type": "boolean" }
@@ -207,5 +214,4 @@
     }
   }
 }
-
 

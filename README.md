@@ -64,6 +64,10 @@ Custom profile path can be set with the `--profile` command line argument.
 
 ### Examples
 
+Full example profile:
+
+- `crates/gamacros-workspace/resources/gc_profile.yaml`
+
 Minimal profile with per‑app rules via selectors and a device remap:
 
 ```yaml
@@ -119,7 +123,20 @@ rules:
     sticks:
       right:
         mode: mouse_move
+        deadzone: 0.15
         max_speed_px_s: 1600
+        gamma: 1.5
+        tick_ms: 4
+        smoothing_window_ms: 25
+      left:
+        mode: scroll
+        deadzone: 0.15
+        speed_lines_s: 120
+        gamma: 1.5
+        tick_ms: 4
+        smoothing_window_ms: 25
+        trigger_boost_max: 5.0
+        trigger_boost_gamma: 1.5
 ```
 
 #### Buttons and chords
