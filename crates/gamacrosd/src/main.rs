@@ -27,7 +27,8 @@ use crate::app::Gamacros;
 use crate::cli::{Cli, Command, ControlCommand};
 use crate::domain::{
     apply_wake_intents, overdue_wake_event, reduce_event, reschedule_wake,
-    DomainControl, DomainEvent, DomainStep, SystemEvent, TimerEvent, WakeState,
+    DomainControl, DomainEvent, DomainStep, RuntimeMode, RuntimeState, SystemEvent,
+    TimerEvent, WakeState,
 };
 use crate::runner::ActionRunner;
 
@@ -203,9 +204,13 @@ fn run_effects(
 
 fn apply_domain_step(
     step: DomainStep,
+    runtime_state: &mut RuntimeState,
     action_runner: &mut ActionRunner<'_>,
     wake_state: &mut WakeState,
 ) -> DomainControl {
+    if let Some(next_mode) = step.next_mode {
+        runtime_state.set_mode(next_mode);
+    }
     if let Some(shell) = step.set_shell {
         action_runner.set_shell(shell);
     }
@@ -216,6 +221,7 @@ fn apply_domain_step(
 
 fn process_overdue_wake(
     gamacros: &mut Gamacros,
+    runtime_state: &mut RuntimeState,
     action_runner: &mut ActionRunner<'_>,
     manager: &ControllerManager,
     wake_state: &mut WakeState,
@@ -226,34 +232,42 @@ fn process_overdue_wake(
         return DomainControl::Continue;
     };
 
-    let step = reduce_event(event, gamacros, manager, wake_state);
-    apply_domain_step(step, action_runner, wake_state)
+    let step = reduce_event(event, gamacros, manager, runtime_state, wake_state);
+    apply_domain_step(step, runtime_state, action_runner, wake_state)
 }
 
 fn dispatch_domain_event(
     event: DomainEvent,
     gamacros: &mut Gamacros,
+    runtime_state: &mut RuntimeState,
     action_runner: &mut ActionRunner<'_>,
     manager: &ControllerManager,
     wake_state: &mut WakeState,
 ) -> DomainControl {
-    let step = reduce_event(event, gamacros, manager, wake_state);
-    apply_domain_step(step, action_runner, wake_state)
+    let step = reduce_event(event, gamacros, manager, runtime_state, wake_state);
+    apply_domain_step(step, runtime_state, action_runner, wake_state)
 }
 
 fn dispatch_and_process_overdue(
     event: DomainEvent,
     gamacros: &mut Gamacros,
+    runtime_state: &mut RuntimeState,
     action_runner: &mut ActionRunner<'_>,
     manager: &ControllerManager,
     wake_state: &mut WakeState,
 ) -> DomainControl {
-    let control =
-        dispatch_domain_event(event, gamacros, action_runner, manager, wake_state);
+    let control = dispatch_domain_event(
+        event,
+        gamacros,
+        runtime_state,
+        action_runner,
+        manager,
+        wake_state,
+    );
     if let DomainControl::Break = control {
         return DomainControl::Break;
     }
-    process_overdue_wake(gamacros, action_runner, manager, wake_state)
+    process_overdue_wake(gamacros, runtime_state, action_runner, manager, wake_state)
 }
 
 fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
@@ -350,6 +364,7 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
             let mut wake_rx = crossbeam_channel::never::<std::time::Instant>();
             let idle_period = Duration::from_millis(16);
             let fast_period = Duration::from_millis(5);
+            let mut runtime_state = RuntimeState::new(RuntimeMode::Booting);
             let mut wake_state = WakeState::new(std::time::Instant::now());
 
             let workspace = match Workspace::new(workspace_path.as_deref()) {
@@ -372,6 +387,11 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
             };
 
             let mut action_runner = ActionRunner::new(&mut keypress, &manager);
+            runtime_state.set_mode(if gamacros.workspace.is_some() {
+                RuntimeMode::Active
+            } else {
+                RuntimeMode::AwaitingProfile
+            });
 
             print_info!(
                 "gamacrosd started. Listening for controller and activity events."
@@ -382,6 +402,7 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                         if let DomainControl::Break = dispatch_domain_event(
                             DomainEvent::System(SystemEvent::ShutdownRequested),
                             &mut gamacros,
+                            &mut runtime_state,
                             &mut action_runner,
                             &manager,
                             &mut wake_state,
@@ -395,6 +416,7 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                             if let DomainControl::Break = dispatch_and_process_overdue(
                                 DomainEvent::Controller(event),
                                 &mut gamacros,
+                                &mut runtime_state,
                                 &mut action_runner,
                                 &manager,
                                 &mut wake_state,
@@ -413,6 +435,7 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                             if let DomainControl::Break = dispatch_domain_event(
                                 DomainEvent::Api(command),
                                 &mut gamacros,
+                                &mut runtime_state,
                                 &mut action_runner,
                                 &manager,
                                 &mut wake_state,
@@ -425,6 +448,7 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                     if let DomainControl::Break = dispatch_domain_event(
                         DomainEvent::Timer(TimerEvent::Wake),
                         &mut gamacros,
+                        &mut runtime_state,
                         &mut action_runner,
                         &manager,
                         &mut wake_state,
@@ -437,6 +461,7 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                 if let DomainControl::Break = dispatch_and_process_overdue(
                     DomainEvent::Activity(msg),
                     &mut gamacros,
+                    &mut runtime_state,
                     &mut action_runner,
                     &manager,
                     &mut wake_state,
@@ -452,6 +477,7 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                 if let DomainControl::Break = dispatch_and_process_overdue(
                     DomainEvent::Profile(msg),
                     &mut gamacros,
+                    &mut runtime_state,
                     &mut action_runner,
                     &manager,
                     &mut wake_state,

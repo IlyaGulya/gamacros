@@ -7,7 +7,10 @@ use gamacros_workspace::ProfileEvent;
 use crate::activity::ActivityEvent;
 use crate::api::Command as ApiCommand;
 use crate::app::{ButtonPhase, Effect, Gamacros};
-use crate::domain::{DomainEvent, SystemEvent, TimerEvent, WakeIntent, WakeState};
+use crate::domain::{
+    DomainEvent, RuntimeMode, RuntimeState, SystemEvent, TimerEvent, WakeIntent,
+    WakeState,
+};
 use crate::{print_debug, print_error, print_info};
 
 pub enum DomainControl {
@@ -19,6 +22,7 @@ pub struct DomainStep {
     pub effects: Vec<Effect>,
     pub set_shell: Option<Option<Box<str>>>,
     pub wake_intents: Vec<WakeIntent>,
+    pub next_mode: Option<RuntimeMode>,
     pub control: DomainControl,
 }
 
@@ -28,6 +32,7 @@ impl DomainStep {
             effects: Vec::new(),
             set_shell: None,
             wake_intents: Vec::new(),
+            next_mode: None,
             control: DomainControl::Continue,
         }
     }
@@ -44,9 +49,17 @@ pub fn reduce_event(
     event: DomainEvent,
     gamacros: &mut Gamacros,
     manager: &ControllerManager,
+    runtime_state: &RuntimeState,
     wake_state: &WakeState,
 ) -> DomainStep {
     let mut step = DomainStep::continue_();
+
+    if runtime_state.mode() == RuntimeMode::ShuttingDown {
+        if matches!(event, DomainEvent::System(SystemEvent::ShutdownRequested)) {
+            return DomainStep::break_();
+        }
+        return step;
+    }
 
     match event {
         DomainEvent::Controller(controller_event) => match controller_event {
@@ -102,11 +115,13 @@ pub fn reduce_event(
                 gamacros.set_workspace(workspace);
                 step.set_shell = Some(gamacros.current_shell());
                 step.wake_intents.push(WakeIntent::Reschedule);
+                step.next_mode = Some(RuntimeMode::Active);
             }
             ProfileEvent::Removed => {
                 gamacros.remove_workspace();
                 step.set_shell = Some(gamacros.current_shell());
                 step.wake_intents.push(WakeIntent::Reschedule);
+                step.next_mode = Some(RuntimeMode::AwaitingProfile);
             }
             ProfileEvent::Error(error) => {
                 print_error!("profile error: {error}");
@@ -170,6 +185,7 @@ pub fn reduce_event(
             step.wake_intents.push(WakeIntent::Reschedule);
         }
         DomainEvent::System(SystemEvent::ShutdownRequested) => {
+            step.next_mode = Some(RuntimeMode::ShuttingDown);
             return DomainStep::break_();
         }
     }
