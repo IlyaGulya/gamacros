@@ -33,6 +33,12 @@ struct ButtonRepeatTask {
     delay_done: bool,
 }
 
+#[derive(Debug, Default)]
+struct ButtonRepeatPoll {
+    effects: Vec<Effect>,
+    fired: usize,
+}
+
 #[derive(Debug, Clone)]
 struct ButtonTransition {
     target_button: Button,
@@ -147,6 +153,7 @@ impl Gamacros {
 
         self.active_app = app.into();
         self.sticks.borrow_mut().on_app_change();
+        self.button_repeats.clear();
         self.rebuild_binding_context();
     }
 
@@ -213,6 +220,12 @@ impl Gamacros {
         );
     }
 
+    pub fn on_tick_effects(&mut self) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        self.on_tick_with(|effect| effects.push(effect));
+        effects
+    }
+
     /// Return next due time for any repeat task, if any.
     pub fn next_repeat_due(&self) -> Option<std::time::Instant> {
         // Borrow mutably internally to read/update heap staleness cheaply.
@@ -235,6 +248,12 @@ impl Gamacros {
         );
     }
 
+    pub fn due_repeat_effects(&self, now: Instant) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        self.process_due_repeats(now, |effect| effects.push(effect));
+        effects
+    }
+
     /// Return next due time for any button repeat task, if any.
     pub fn next_button_repeat_due(&self) -> Option<Instant> {
         self.button_repeats.values().map(|t| t.next_fire).min()
@@ -247,24 +266,23 @@ impl Gamacros {
         sink: &mut F,
     ) {
         let started_at = Instant::now();
-        let mut fired = 0usize;
-        for task in self.button_repeats.values_mut() {
-            if now >= task.next_fire {
-                sink(Effect::KeyTap(task.key.clone()));
-                fired += 1;
-                if !task.delay_done {
-                    task.delay_done = true;
-                }
-                task.next_fire =
-                    now + std::time::Duration::from_millis(task.interval_ms);
-            }
+        let poll = self.poll_button_repeats(now);
+        for effect in poll.effects {
+            sink(effect);
         }
-        if fired > 0 {
+        if poll.fired > 0 {
             print_debug!(
-                "processed button repeats: fired={fired} elapsed_us={}",
+                "processed button repeats: fired={} elapsed_us={}",
+                poll.fired,
                 started_at.elapsed().as_micros()
             );
         }
+    }
+
+    pub fn button_repeat_effects(&mut self, now: Instant) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        self.process_button_repeats(now, &mut |effect| effects.push(effect));
+        effects
     }
 
     /// Whether any button repeat tasks are active.
@@ -443,33 +461,19 @@ impl Gamacros {
         }
 
         for transition in transitions {
-            for effect in transition.effects {
-                sink(effect);
-            }
-
-            match transition.repeat {
-                ButtonRepeatDirective::None => {}
-                ButtonRepeatDirective::Start {
-                    key,
-                    delay_ms,
-                    interval_ms,
-                } => {
-                    self.button_repeats.insert(
-                        (id, transition.target_button),
-                        ButtonRepeatTask {
-                            key,
-                            interval_ms,
-                            next_fire: Instant::now()
-                                + std::time::Duration::from_millis(delay_ms),
-                            delay_done: false,
-                        },
-                    );
-                }
-                ButtonRepeatDirective::Stop => {
-                    self.button_repeats.remove(&(id, transition.target_button));
-                }
-            }
+            self.apply_button_transition(id, transition, &mut sink);
         }
+    }
+
+    pub fn on_button_effects(
+        &mut self,
+        id: ControllerId,
+        button: Button,
+        phase: ButtonPhase,
+    ) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        self.on_button_with(id, button, phase, |effect| effects.push(effect));
+        effects
     }
 
     fn resolve_button_transitions(
@@ -483,15 +487,43 @@ impl Gamacros {
     ) -> Vec<ButtonTransition> {
         let mut transitions = Vec::new();
 
+        if phase == ButtonPhase::Released {
+            for (target, rule) in button_rules.iter() {
+                let was = prev_pressed.is_superset(target);
+                let is_now = now_pressed.is_superset(target);
+                if !was || is_now {
+                    continue;
+                }
+
+                let mut effects = Vec::new();
+                let repeat = match rule.action.clone() {
+                    ButtonAction::Keystroke(_) => ButtonRepeatDirective::Stop,
+                    ButtonAction::HoldClick(btn) => {
+                        effects.push(Effect::MouseRelease { button: btn });
+                        ButtonRepeatDirective::None
+                    }
+                    ButtonAction::RawModifier(key) => {
+                        effects.push(Effect::RawModifierRelease(key));
+                        ButtonRepeatDirective::None
+                    }
+                    _ => ButtonRepeatDirective::None,
+                };
+                transitions.push(ButtonTransition {
+                    target_button: button,
+                    effects,
+                    repeat,
+                });
+            }
+
+            return transitions;
+        }
+
         // First pass: find max_bits among rules that should fire
         let mut max_bits: u32 = 0;
         for (target, _rule) in button_rules.iter() {
             let was = prev_pressed.is_superset(target);
             let is_now = now_pressed.is_superset(target);
-            let fire = match phase {
-                ButtonPhase::Pressed => was != is_now,
-                ButtonPhase::Released => was && !is_now,
-            };
+            let fire = was != is_now;
             if fire {
                 let bits: u32 = target.count();
                 if bits > max_bits {
@@ -508,10 +540,7 @@ impl Gamacros {
         for (target, rule) in button_rules.iter() {
             let was = prev_pressed.is_superset(target);
             let is_now = now_pressed.is_superset(target);
-            let fire = match phase {
-                ButtonPhase::Pressed => was != is_now,
-                ButtonPhase::Released => was && !is_now,
-            };
+            let fire = was != is_now;
             if !fire || target.count() != max_bits {
                 continue;
             }
@@ -568,30 +597,65 @@ impl Gamacros {
                         repeat,
                     });
                 }
-                ButtonPhase::Released => {
-                    let mut effects = Vec::new();
-                    let repeat = match rule.action.clone() {
-                        ButtonAction::Keystroke(_) => ButtonRepeatDirective::Stop,
-                        ButtonAction::HoldClick(btn) => {
-                            effects.push(Effect::MouseRelease { button: btn });
-                            ButtonRepeatDirective::None
-                        }
-                        ButtonAction::RawModifier(key) => {
-                            effects.push(Effect::RawModifierRelease(key));
-                            ButtonRepeatDirective::None
-                        }
-                        _ => ButtonRepeatDirective::None,
-                    };
-                    transitions.push(ButtonTransition {
-                        target_button: button,
-                        effects,
-                        repeat,
-                    });
-                }
+                ButtonPhase::Released => unreachable!(),
             }
         }
 
         transitions
+    }
+
+    fn apply_button_transition<F: FnMut(Effect)>(
+        &mut self,
+        id: ControllerId,
+        transition: ButtonTransition,
+        sink: &mut F,
+    ) {
+        for effect in transition.effects {
+            sink(effect);
+        }
+
+        match transition.repeat {
+            ButtonRepeatDirective::None => {}
+            ButtonRepeatDirective::Start {
+                key,
+                delay_ms,
+                interval_ms,
+            } => {
+                self.button_repeats.insert(
+                    (id, transition.target_button),
+                    ButtonRepeatTask {
+                        key,
+                        interval_ms,
+                        next_fire: Instant::now()
+                            + std::time::Duration::from_millis(delay_ms),
+                        delay_done: false,
+                    },
+                );
+            }
+            ButtonRepeatDirective::Stop => {
+                self.button_repeats.remove(&(id, transition.target_button));
+            }
+        }
+    }
+
+    fn poll_button_repeats(&mut self, now: Instant) -> ButtonRepeatPoll {
+        let mut poll = ButtonRepeatPoll::default();
+
+        for task in self.button_repeats.values_mut() {
+            if now < task.next_fire {
+                continue;
+            }
+
+            poll.effects.push(Effect::KeyTap(task.key.clone()));
+            poll.fired += 1;
+            if !task.delay_done {
+                task.delay_done = true;
+            }
+            task.next_fire =
+                now + std::time::Duration::from_millis(task.interval_ms);
+        }
+
+        poll
     }
 
     fn rebuild_binding_context(&mut self) {

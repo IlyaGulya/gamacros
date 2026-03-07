@@ -194,6 +194,15 @@ enum EventLoopControl {
     Break,
 }
 
+fn run_effects(
+    action_runner: &mut ActionRunner<'_>,
+    effects: Vec<crate::app::Effect>,
+) {
+    for effect in effects {
+        action_runner.run_effect(effect);
+    }
+}
+
 struct WakeState {
     need_reschedule: bool,
     ticking_enabled: bool,
@@ -238,24 +247,16 @@ fn handle_domain_event(
                 wake_state.need_reschedule = true;
             }
             ControllerEvent::ButtonPressed { id, button } => {
-                gamacros.on_button_with(
-                    id,
-                    button,
-                    ButtonPhase::Pressed,
-                    |action| {
-                        action_runner.run_effect(action);
-                    },
+                run_effects(
+                    action_runner,
+                    gamacros.on_button_effects(id, button, ButtonPhase::Pressed),
                 );
                 wake_state.need_reschedule = true;
             }
             ControllerEvent::ButtonReleased { id, button } => {
-                gamacros.on_button_with(
-                    id,
-                    button,
-                    ButtonPhase::Released,
-                    |action| {
-                        action_runner.run_effect(action);
-                    },
+                run_effects(
+                    action_runner,
+                    gamacros.on_button_effects(id, button, ButtonPhase::Released),
                 );
                 wake_state.need_reschedule = true;
             }
@@ -329,9 +330,7 @@ fn handle_domain_event(
                         "wake timer: tick due lateness_us={}",
                         now.duration_since(due).as_micros()
                     );
-                    gamacros.on_tick_with(|action| {
-                        action_runner.run_effect(action);
-                    });
+                    run_effects(action_runner, gamacros.on_tick_effects());
                     if gamacros.wants_fast_tick() {
                         wake_state.fast_mode = true;
                         wake_state.fast_until = now + Duration::from_millis(250);
@@ -346,17 +345,13 @@ fn handle_domain_event(
                 }
             }
             let repeats_started_at = std::time::Instant::now();
-            gamacros.process_due_repeats(now, |action| {
-                action_runner.run_effect(action);
-            });
+            run_effects(action_runner, gamacros.due_repeat_effects(now));
             print_debug!(
                 "wake timer: stick repeats elapsed_us={}",
                 repeats_started_at.elapsed().as_micros()
             );
             let button_repeats_started_at = std::time::Instant::now();
-            gamacros.process_button_repeats(now, &mut |action| {
-                action_runner.run_effect(action);
-            });
+            run_effects(action_runner, gamacros.button_repeat_effects(now));
             print_debug!(
                 "wake timer: button repeats elapsed_us={}",
                 button_repeats_started_at.elapsed().as_micros()
