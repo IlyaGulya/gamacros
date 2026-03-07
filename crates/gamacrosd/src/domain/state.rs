@@ -23,4 +23,8 @@ impl RuntimeState {
     pub fn set_mode(&mut self, mode: RuntimeMode) {
         self.mode = mode;
     }
+
+    pub fn is_active(&self) -> bool {
+        self.mode == RuntimeMode::Active
+    }
 }

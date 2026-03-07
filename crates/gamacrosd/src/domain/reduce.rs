@@ -53,6 +53,7 @@ pub fn reduce_event(
     wake_state: &WakeState,
 ) -> DomainStep {
     let mut step = DomainStep::continue_();
+    let is_active = runtime_state.is_active();
 
     if runtime_state.mode() == RuntimeMode::ShuttingDown {
         if matches!(event, DomainEvent::System(SystemEvent::ShutdownRequested)) {
@@ -78,11 +79,25 @@ pub fn reduce_event(
                 step.wake_intents.push(WakeIntent::Reschedule);
             }
             ControllerEvent::ButtonPressed { id, button } => {
+                if !is_active {
+                    print_debug!(
+                        "ignoring button press while runtime mode is {:?}",
+                        runtime_state.mode()
+                    );
+                    return step;
+                }
                 step.effects =
                     gamacros.on_button_effects(id, button, ButtonPhase::Pressed);
                 step.wake_intents.push(WakeIntent::Reschedule);
             }
             ControllerEvent::ButtonReleased { id, button } => {
+                if !is_active {
+                    print_debug!(
+                        "ignoring button release while runtime mode is {:?}",
+                        runtime_state.mode()
+                    );
+                    return step;
+                }
                 step.effects =
                     gamacros.on_button_effects(id, button, ButtonPhase::Released);
                 step.wake_intents.push(WakeIntent::Reschedule);
@@ -92,7 +107,7 @@ pub fn reduce_event(
                     "domain event: axis motion controller={id} axis={axis:?} value={value:.3}"
                 );
                 gamacros.on_axis_motion(id, axis, value);
-                if !wake_state.ticking_enabled {
+                if is_active && !wake_state.ticking_enabled {
                     step.wake_intents.push(WakeIntent::Reschedule);
                     print_debug!(
                         "axis motion armed ticking: controller={id} axis={axis:?} value={value:.3}"
@@ -143,6 +158,12 @@ pub fn reduce_event(
             },
         },
         DomainEvent::Timer(TimerEvent::Wake) => {
+            if !is_active {
+                if wake_state.fast_mode {
+                    step.wake_intents.push(WakeIntent::DisableFastMode);
+                }
+                return step;
+            }
             let now = std::time::Instant::now();
             print_debug!(
                 "wake timer fired: next_tick_due={:?} fast_mode={} need_reschedule={}",
