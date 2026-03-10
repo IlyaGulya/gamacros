@@ -43,6 +43,31 @@ impl DomainStep {
             ..Self::continue_()
         }
     }
+
+    fn with_mode(mut self, mode: RuntimeMode) -> Self {
+        self.next_mode = Some(mode);
+        self
+    }
+}
+
+fn transition_to_active(step: &mut DomainStep) {
+    step.next_mode = Some(RuntimeMode::Active);
+}
+
+fn transition_to_awaiting_profile(step: &mut DomainStep) {
+    step.next_mode = Some(RuntimeMode::AwaitingProfile);
+}
+
+fn transition_to_shutting_down(step: DomainStep) -> DomainStep {
+    step.with_mode(RuntimeMode::ShuttingDown)
+}
+
+fn ignored_for_mode(runtime_state: &RuntimeState, what: &str) -> DomainStep {
+    print_debug!(
+        "ignoring {what} while runtime mode is {:?}",
+        runtime_state.mode()
+    );
+    DomainStep::continue_()
 }
 
 pub fn reduce_event(
@@ -53,11 +78,10 @@ pub fn reduce_event(
     wake_state: &WakeState,
 ) -> DomainStep {
     let mut step = DomainStep::continue_();
-    let is_active = runtime_state.is_active();
 
     if runtime_state.mode() == RuntimeMode::ShuttingDown {
         if matches!(event, DomainEvent::System(SystemEvent::ShutdownRequested)) {
-            return DomainStep::break_();
+            return transition_to_shutting_down(DomainStep::break_());
         }
         return step;
     }
@@ -79,24 +103,16 @@ pub fn reduce_event(
                 step.wake_intents.push(WakeIntent::Reschedule);
             }
             ControllerEvent::ButtonPressed { id, button } => {
-                if !is_active {
-                    print_debug!(
-                        "ignoring button press while runtime mode is {:?}",
-                        runtime_state.mode()
-                    );
-                    return step;
+                if !runtime_state.allows_input_actions() {
+                    return ignored_for_mode(runtime_state, "button press");
                 }
                 step.effects =
                     gamacros.on_button_effects(id, button, ButtonPhase::Pressed);
                 step.wake_intents.push(WakeIntent::Reschedule);
             }
             ControllerEvent::ButtonReleased { id, button } => {
-                if !is_active {
-                    print_debug!(
-                        "ignoring button release while runtime mode is {:?}",
-                        runtime_state.mode()
-                    );
-                    return step;
+                if !runtime_state.allows_input_actions() {
+                    return ignored_for_mode(runtime_state, "button release");
                 }
                 step.effects =
                     gamacros.on_button_effects(id, button, ButtonPhase::Released);
@@ -107,7 +123,9 @@ pub fn reduce_event(
                     "domain event: axis motion controller={id} axis={axis:?} value={value:.3}"
                 );
                 gamacros.on_axis_motion(id, axis, value);
-                if is_active && !wake_state.ticking_enabled {
+                if runtime_state.allows_input_actions()
+                    && !wake_state.ticking_enabled
+                {
                     step.wake_intents.push(WakeIntent::Reschedule);
                     print_debug!(
                         "axis motion armed ticking: controller={id} axis={axis:?} value={value:.3}"
@@ -130,13 +148,13 @@ pub fn reduce_event(
                 gamacros.set_workspace(workspace);
                 step.set_shell = Some(gamacros.current_shell());
                 step.wake_intents.push(WakeIntent::Reschedule);
-                step.next_mode = Some(RuntimeMode::Active);
+                transition_to_active(&mut step);
             }
             ProfileEvent::Removed => {
                 gamacros.remove_workspace();
                 step.set_shell = Some(gamacros.current_shell());
                 step.wake_intents.push(WakeIntent::Reschedule);
-                step.next_mode = Some(RuntimeMode::AwaitingProfile);
+                transition_to_awaiting_profile(&mut step);
             }
             ProfileEvent::Error(error) => {
                 print_error!("profile error: {error}");
@@ -158,10 +176,14 @@ pub fn reduce_event(
             },
         },
         DomainEvent::Timer(TimerEvent::Wake) => {
-            if !is_active {
+            if !runtime_state.handles_timer_wake() {
                 if wake_state.fast_mode {
                     step.wake_intents.push(WakeIntent::DisableFastMode);
                 }
+                print_debug!(
+                    "ignoring timer wake while runtime mode is {:?}",
+                    runtime_state.mode()
+                );
                 return step;
             }
             let now = std::time::Instant::now();
@@ -206,8 +228,7 @@ pub fn reduce_event(
             step.wake_intents.push(WakeIntent::Reschedule);
         }
         DomainEvent::System(SystemEvent::ShutdownRequested) => {
-            step.next_mode = Some(RuntimeMode::ShuttingDown);
-            return DomainStep::break_();
+            return transition_to_shutting_down(DomainStep::break_());
         }
     }
 

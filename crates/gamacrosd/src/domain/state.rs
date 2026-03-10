@@ -27,4 +27,12 @@ impl RuntimeState {
     pub fn is_active(&self) -> bool {
         self.mode == RuntimeMode::Active
     }
+
+    pub fn allows_input_actions(&self) -> bool {
+        matches!(self.mode, RuntimeMode::Active)
+    }
+
+    pub fn handles_timer_wake(&self) -> bool {
+        matches!(self.mode, RuntimeMode::Active)
+    }
 }
