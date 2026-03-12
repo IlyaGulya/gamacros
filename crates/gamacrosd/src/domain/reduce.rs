@@ -8,8 +8,8 @@ use crate::activity::ActivityEvent;
 use crate::api::Command as ApiCommand;
 use crate::app::{ButtonPhase, Effect, Gamacros};
 use crate::domain::{
-    DomainEvent, RuntimeMode, RuntimeState, SystemEvent, TimerEvent, WakeIntent,
-    WakeState,
+    ControllerMode, DomainEvent, RuntimeMode, RuntimeState, SystemEvent, TimerEvent,
+    WakeIntent, WakeState,
 };
 use crate::{print_debug, print_error, print_info};
 
@@ -22,6 +22,8 @@ pub struct DomainStep {
     pub effects: Vec<Effect>,
     pub set_shell: Option<Option<Box<str>>>,
     pub wake_intents: Vec<WakeIntent>,
+    pub controller_updates:
+        Vec<(gamacros_gamepad::ControllerId, Option<ControllerMode>)>,
     pub next_mode: Option<RuntimeMode>,
     pub control: DomainControl,
 }
@@ -32,6 +34,7 @@ impl DomainStep {
             effects: Vec::new(),
             set_shell: None,
             wake_intents: Vec::new(),
+            controller_updates: Vec::new(),
             next_mode: None,
             control: DomainControl::Continue,
         }
@@ -95,17 +98,31 @@ pub fn reduce_event(
                 }
 
                 gamacros.add_controller(info);
+                print_debug!("controller state transition: id={id} -> Connected");
+                step.controller_updates
+                    .push((id, Some(ControllerMode::Connected)));
                 step.wake_intents.push(WakeIntent::Reschedule);
             }
             ControllerEvent::Disconnected(id) => {
                 gamacros.remove_controller(id);
                 gamacros.on_controller_disconnected(id);
+                print_debug!("controller state transition: id={id} -> Disconnected");
+                step.controller_updates.push((id, None));
                 step.wake_intents.push(WakeIntent::Reschedule);
             }
             ControllerEvent::ButtonPressed { id, button } => {
                 if !runtime_state.allows_input_actions() {
                     return ignored_for_mode(runtime_state, "button press");
                 }
+                if runtime_state.controller_mode(id)
+                    != Some(ControllerMode::InputActive)
+                {
+                    print_debug!(
+                        "controller state transition: id={id} -> InputActive"
+                    );
+                }
+                step.controller_updates
+                    .push((id, Some(ControllerMode::InputActive)));
                 step.effects =
                     gamacros.on_button_effects(id, button, ButtonPhase::Pressed);
                 step.wake_intents.push(WakeIntent::Reschedule);
@@ -114,6 +131,15 @@ pub fn reduce_event(
                 if !runtime_state.allows_input_actions() {
                     return ignored_for_mode(runtime_state, "button release");
                 }
+                if runtime_state.controller_mode(id)
+                    != Some(ControllerMode::InputActive)
+                {
+                    print_debug!(
+                        "controller state transition: id={id} -> InputActive"
+                    );
+                }
+                step.controller_updates
+                    .push((id, Some(ControllerMode::InputActive)));
                 step.effects =
                     gamacros.on_button_effects(id, button, ButtonPhase::Released);
                 step.wake_intents.push(WakeIntent::Reschedule);
@@ -123,6 +149,17 @@ pub fn reduce_event(
                     "domain event: axis motion controller={id} axis={axis:?} value={value:.3}"
                 );
                 gamacros.on_axis_motion(id, axis, value);
+                let next_mode = if value.abs() >= 0.05 {
+                    ControllerMode::InputActive
+                } else {
+                    ControllerMode::Connected
+                };
+                if runtime_state.controller_mode(id) != Some(next_mode) {
+                    print_debug!(
+                        "controller state transition: id={id} -> {next_mode:?}"
+                    );
+                }
+                step.controller_updates.push((id, Some(next_mode)));
                 if runtime_state.allows_input_actions()
                     && !wake_state.ticking_enabled
                 {

@@ -1,3 +1,6 @@
+use ahash::AHashMap;
+use gamacros_gamepad::ControllerId;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeMode {
     Booting,
@@ -6,14 +9,23 @@ pub enum RuntimeMode {
     ShuttingDown,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ControllerMode {
+    Connected,
+    InputActive,
+}
+
 pub struct RuntimeState {
     mode: RuntimeMode,
+    controllers: AHashMap<ControllerId, ControllerMode>,
 }
 
 impl RuntimeState {
     pub fn new(mode: RuntimeMode) -> Self {
-        Self { mode }
+        Self {
+            mode,
+            controllers: AHashMap::new(),
+        }
     }
 
     pub fn mode(&self) -> RuntimeMode {
@@ -24,15 +36,23 @@ impl RuntimeState {
         self.mode = mode;
     }
 
-    pub fn is_active(&self) -> bool {
-        self.mode == RuntimeMode::Active
-    }
-
     pub fn allows_input_actions(&self) -> bool {
         matches!(self.mode, RuntimeMode::Active)
     }
 
     pub fn handles_timer_wake(&self) -> bool {
         matches!(self.mode, RuntimeMode::Active)
+    }
+
+    pub fn controller_mode(&self, id: ControllerId) -> Option<ControllerMode> {
+        self.controllers.get(&id).copied()
+    }
+
+    pub fn set_controller_mode(&mut self, id: ControllerId, mode: ControllerMode) {
+        self.controllers.insert(id, mode);
+    }
+
+    pub fn disconnect_controller(&mut self, id: ControllerId) {
+        self.controllers.remove(&id);
     }
 }

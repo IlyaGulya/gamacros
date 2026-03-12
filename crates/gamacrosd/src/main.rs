@@ -208,6 +208,14 @@ fn apply_domain_step(
     action_runner: &mut ActionRunner<'_>,
     wake_state: &mut WakeState,
 ) -> DomainControl {
+    for (id, next_mode) in step.controller_updates {
+        match next_mode {
+            Some(mode) => runtime_state.set_controller_mode(id, mode),
+            None => {
+                runtime_state.disconnect_controller(id);
+            }
+        }
+    }
     if let Some(next_mode) = step.next_mode {
         runtime_state.set_mode(next_mode);
     }
