@@ -11,8 +11,10 @@ pub enum RuntimeMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ControllerMode {
-    Connected,
-    InputActive,
+    ConnectedIdle,
+    ButtonsActive,
+    AxisActive,
+    MixedInput,
 }
 
 pub struct RuntimeState {

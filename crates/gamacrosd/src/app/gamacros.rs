@@ -141,6 +141,22 @@ impl Gamacros {
         self.controllers.get(&id).map(|s| s.rumble).unwrap_or(false)
     }
 
+    pub fn controller_has_pressed_buttons(&self, id: ControllerId) -> bool {
+        self.controllers
+            .get(&id)
+            .is_some_and(|state| !state.pressed.is_empty())
+    }
+
+    pub fn controller_has_axis_activity(
+        &self,
+        id: ControllerId,
+        threshold: f32,
+    ) -> bool {
+        self.controllers.get(&id).is_some_and(|state| {
+            state.axes.iter().any(|value| value.abs() >= threshold)
+        })
+    }
+
     pub fn set_active_app(&mut self, app: &str) {
         if self.active_app.as_ref() == app {
             return;
