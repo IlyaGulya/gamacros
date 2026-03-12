@@ -15,6 +15,8 @@ pub enum ControllerMode {
     ButtonsActive,
     AxisActive,
     MixedInput,
+    Repeating,
+    RepeatingWithInput,
 }
 
 pub struct RuntimeState {

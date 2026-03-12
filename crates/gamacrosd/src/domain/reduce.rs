@@ -79,12 +79,17 @@ fn resolve_controller_mode(
 ) -> ControllerMode {
     let has_buttons = gamacros.controller_has_pressed_buttons(id);
     let has_axes = gamacros.controller_has_axis_activity(id, 0.05);
+    let has_repeats = gamacros.controller_has_repeats(id);
 
-    match (has_buttons, has_axes) {
-        (false, false) => ControllerMode::ConnectedIdle,
-        (true, false) => ControllerMode::ButtonsActive,
-        (false, true) => ControllerMode::AxisActive,
-        (true, true) => ControllerMode::MixedInput,
+    match (has_buttons, has_axes, has_repeats) {
+        (_, _, true) if has_buttons || has_axes => {
+            ControllerMode::RepeatingWithInput
+        }
+        (_, _, true) => ControllerMode::Repeating,
+        (false, false, false) => ControllerMode::ConnectedIdle,
+        (true, false, false) => ControllerMode::ButtonsActive,
+        (false, true, false) => ControllerMode::AxisActive,
+        (true, true, false) => ControllerMode::MixedInput,
     }
 }
 

@@ -157,6 +157,11 @@ impl Gamacros {
         })
     }
 
+    pub fn controller_has_repeats(&self, id: ControllerId) -> bool {
+        self.button_repeats.keys().any(|(cid, _)| *cid == id)
+            || self.sticks.borrow().has_active_repeats_for(id)
+    }
+
     pub fn set_active_app(&mut self, app: &str) {
         if self.active_app.as_ref() == app {
             return;
