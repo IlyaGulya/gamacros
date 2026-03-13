@@ -358,4 +358,39 @@ mod tests {
             Some(state) if state.mode() == ControllerMode::ButtonsActive
         ));
     }
+
+    #[test]
+    fn reduce_event_connect_then_disconnect_forms_expected_lifecycle_trace() {
+        let mut gamacros = Gamacros::new();
+        let manager = ControllerManager::new().expect("manager init");
+        let wake_state = WakeState::new(std::time::Instant::now());
+        let runtime_state = RuntimeState::new(RuntimeMode::Active);
+
+        let connect_step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::Connected(controller_info(9))),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+
+        assert_eq!(connect_step.transition.controller_updates.len(), 1);
+        assert!(matches!(
+            connect_step.transition.controller_updates[0].next_state,
+            Some(state) if state.mode() == ControllerMode::ConnectedIdle
+        ));
+
+        let disconnect_step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::Disconnected(9)),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+
+        assert_eq!(disconnect_step.transition.controller_updates.len(), 1);
+        assert!(disconnect_step.transition.controller_updates[0]
+            .next_state
+            .is_none());
+    }
 }

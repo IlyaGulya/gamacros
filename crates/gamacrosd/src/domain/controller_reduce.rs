@@ -147,4 +147,79 @@ mod tests {
             Some(state) if state.mode() == ControllerMode::ConnectedIdle
         ));
     }
+
+    #[test]
+    fn disconnect_event_enqueues_controller_removal() {
+        let mut step = DomainStep::continue_();
+        let mut gamacros = Gamacros::new();
+        gamacros.add_controller(controller_info(1));
+        let runtime_state = RuntimeState::new(RuntimeMode::Active);
+        let wake_state = WakeState::new(std::time::Instant::now());
+
+        let ignored = reduce_controller_event(
+            ControllerEvent::Disconnected(1),
+            &mut step,
+            &mut gamacros,
+            &runtime_state,
+            &wake_state,
+            |_| DomainStep::continue_(),
+        );
+
+        assert!(ignored.is_none());
+        assert_eq!(step.transition.controller_updates.len(), 1);
+        assert!(step.transition.controller_updates[0].next_state.is_none());
+        assert!(matches!(
+            step.transition.wake.as_slice(),
+            [WakeTransition::Reschedule]
+        ));
+    }
+
+    #[test]
+    fn axis_motion_enqueues_axis_active_state_and_reschedule() {
+        let mut step = DomainStep::continue_();
+        let mut gamacros = Gamacros::new();
+        gamacros.add_controller(controller_info(1));
+        let mut runtime_state = RuntimeState::new(RuntimeMode::Active);
+        runtime_state.set_controller_state(
+            1,
+            crate::domain::ControllerRuntimeState::new(
+                ControllerMode::ConnectedIdle,
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    1,
+                    gamacros_workspace::StickSide::Left,
+                ),
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    1,
+                    gamacros_workspace::StickSide::Right,
+                ),
+            ),
+        );
+        let wake_state = WakeState::new(std::time::Instant::now());
+
+        let ignored = reduce_controller_event(
+            ControllerEvent::AxisMotion {
+                id: 1,
+                axis: gamacros_gamepad::Axis::LeftX,
+                value: 0.8,
+            },
+            &mut step,
+            &mut gamacros,
+            &runtime_state,
+            &wake_state,
+            |_| DomainStep::continue_(),
+        );
+
+        assert!(ignored.is_none());
+        assert_eq!(step.transition.controller_updates.len(), 1);
+        assert!(matches!(
+            step.transition.controller_updates[0].next_state,
+            Some(state) if state.mode() == ControllerMode::AxisActive
+        ));
+        assert!(matches!(
+            step.transition.wake.as_slice(),
+            [WakeTransition::Reschedule, ..]
+        ));
+    }
 }
