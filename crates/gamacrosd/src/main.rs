@@ -210,7 +210,7 @@ fn apply_domain_step(
 ) -> DomainControl {
     for (id, next_mode) in step.controller_updates {
         match next_mode {
-            Some(mode) => runtime_state.set_controller_mode(id, mode),
+            Some(state) => runtime_state.set_controller_state(id, state),
             None => {
                 runtime_state.disconnect_controller(id);
             }

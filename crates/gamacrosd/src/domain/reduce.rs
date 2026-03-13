@@ -8,7 +8,8 @@ use crate::activity::ActivityEvent;
 use crate::api::Command as ApiCommand;
 use crate::app::{ButtonPhase, Effect, Gamacros};
 use crate::domain::{
-    ControllerMode, DomainEvent, RuntimeMode, RuntimeState, SystemEvent, TimerEvent,
+    resolve_stick_state, stick_transition, ControllerMode, ControllerRuntimeState,
+    DomainEvent, RuntimeMode, RuntimeState, StickActivity, SystemEvent, TimerEvent,
     WakeIntent, WakeState,
 };
 use crate::{print_debug, print_error, print_info};
@@ -22,8 +23,10 @@ pub struct DomainStep {
     pub effects: Vec<Effect>,
     pub set_shell: Option<Option<Box<str>>>,
     pub wake_intents: Vec<WakeIntent>,
-    pub controller_updates:
-        Vec<(gamacros_gamepad::ControllerId, Option<ControllerMode>)>,
+    pub controller_updates: Vec<(
+        gamacros_gamepad::ControllerId,
+        Option<ControllerRuntimeState>,
+    )>,
     pub next_mode: Option<RuntimeMode>,
     pub control: DomainControl,
 }
@@ -78,11 +81,33 @@ fn resolve_controller_mode(
     id: gamacros_gamepad::ControllerId,
 ) -> ControllerMode {
     let has_buttons = gamacros.controller_has_pressed_buttons(id);
-    let has_axes = gamacros.controller_has_axis_activity(id, 0.05);
-    let has_repeats = gamacros.controller_has_repeats(id);
+    let left_stick =
+        resolve_stick_state(gamacros, id, gamacros_workspace::StickSide::Left);
+    let right_stick =
+        resolve_stick_state(gamacros, id, gamacros_workspace::StickSide::Right);
+    let has_stick_activity = matches!(
+        left_stick.activity,
+        StickActivity::Active | StickActivity::Repeating
+    ) || matches!(
+        right_stick.activity,
+        StickActivity::Active | StickActivity::Repeating
+    );
+    let has_stick_repeats = matches!(left_stick.activity, StickActivity::Repeating)
+        || matches!(right_stick.activity, StickActivity::Repeating);
+    let has_repeats = gamacros.controller_has_repeats(id) || has_stick_repeats;
 
-    match (has_buttons, has_axes, has_repeats) {
-        (_, _, true) if has_buttons || has_axes => {
+    print_debug!(
+        "controller state inputs: id={id} buttons={} left_stick={:?}/{:?} right_stick={:?}/{:?} repeats={}",
+        has_buttons,
+        left_stick.mode,
+        left_stick.activity,
+        right_stick.mode,
+        right_stick.activity,
+        has_repeats
+    );
+
+    match (has_buttons, has_stick_activity, has_repeats) {
+        (_, _, true) if has_buttons || has_stick_activity => {
             ControllerMode::RepeatingWithInput
         }
         (_, _, true) => ControllerMode::Repeating,
@@ -97,12 +122,49 @@ fn push_controller_mode_update(
     step: &mut DomainStep,
     runtime_state: &RuntimeState,
     id: gamacros_gamepad::ControllerId,
-    next_mode: ControllerMode,
+    next_state: ControllerRuntimeState,
 ) {
-    if runtime_state.controller_mode(id) != Some(next_mode) {
-        print_debug!("controller state transition: id={id} -> {next_mode:?}");
+    let previous_state = runtime_state.controller_state(id);
+    if previous_state != Some(next_state) {
+        if let Some((prev, next)) = stick_transition(
+            previous_state.map(|state| state.left_stick()),
+            next_state.left_stick(),
+        ) {
+            print_debug!(
+                "left stick transition: controller={id} prev={prev:?} next={next:?}"
+            );
+        }
+        if let Some((prev, next)) = stick_transition(
+            previous_state.map(|state| state.right_stick()),
+            next_state.right_stick(),
+        ) {
+            print_debug!(
+                "right stick transition: controller={id} prev={prev:?} next={next:?}"
+            );
+        }
+        print_debug!(
+            "controller state transition: id={id} prev={:?} -> next={:?} left={:?}/{:?} right={:?}/{:?}",
+            previous_state.map(|state| state.mode()),
+            next_state.mode(),
+            next_state.left_stick().mode,
+            next_state.left_stick().activity,
+            next_state.right_stick().mode,
+            next_state.right_stick().activity,
+        );
     }
-    step.controller_updates.push((id, Some(next_mode)));
+    step.controller_updates.push((id, Some(next_state)));
+}
+
+fn resolve_controller_state(
+    gamacros: &Gamacros,
+    id: gamacros_gamepad::ControllerId,
+) -> ControllerRuntimeState {
+    let left_stick =
+        resolve_stick_state(gamacros, id, gamacros_workspace::StickSide::Left);
+    let right_stick =
+        resolve_stick_state(gamacros, id, gamacros_workspace::StickSide::Right);
+    let mode = resolve_controller_mode(gamacros, id);
+    ControllerRuntimeState::new(mode, left_stick, right_stick)
 }
 
 pub fn reduce_event(
@@ -134,7 +196,7 @@ pub fn reduce_event(
                     &mut step,
                     runtime_state,
                     id,
-                    ControllerMode::ConnectedIdle,
+                    resolve_controller_state(gamacros, id),
                 );
                 step.wake_intents.push(WakeIntent::Reschedule);
             }
@@ -151,8 +213,13 @@ pub fn reduce_event(
                 }
                 step.effects =
                     gamacros.on_button_effects(id, button, ButtonPhase::Pressed);
-                let next_mode = resolve_controller_mode(gamacros, id);
-                push_controller_mode_update(&mut step, runtime_state, id, next_mode);
+                let next_state = resolve_controller_state(gamacros, id);
+                push_controller_mode_update(
+                    &mut step,
+                    runtime_state,
+                    id,
+                    next_state,
+                );
                 step.wake_intents.push(WakeIntent::Reschedule);
             }
             ControllerEvent::ButtonReleased { id, button } => {
@@ -161,8 +228,13 @@ pub fn reduce_event(
                 }
                 step.effects =
                     gamacros.on_button_effects(id, button, ButtonPhase::Released);
-                let next_mode = resolve_controller_mode(gamacros, id);
-                push_controller_mode_update(&mut step, runtime_state, id, next_mode);
+                let next_state = resolve_controller_state(gamacros, id);
+                push_controller_mode_update(
+                    &mut step,
+                    runtime_state,
+                    id,
+                    next_state,
+                );
                 step.wake_intents.push(WakeIntent::Reschedule);
             }
             ControllerEvent::AxisMotion { id, axis, value } => {
@@ -170,8 +242,13 @@ pub fn reduce_event(
                     "domain event: axis motion controller={id} axis={axis:?} value={value:.3}"
                 );
                 gamacros.on_axis_motion(id, axis, value);
-                let next_mode = resolve_controller_mode(gamacros, id);
-                push_controller_mode_update(&mut step, runtime_state, id, next_mode);
+                let next_state = resolve_controller_state(gamacros, id);
+                push_controller_mode_update(
+                    &mut step,
+                    runtime_state,
+                    id,
+                    next_state,
+                );
                 if runtime_state.allows_input_actions()
                     && !wake_state.ticking_enabled
                 {

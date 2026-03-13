@@ -1,6 +1,8 @@
 use ahash::AHashMap;
 use gamacros_gamepad::ControllerId;
 
+use crate::domain::stick_state::StickState;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RuntimeMode {
     Booting,
@@ -21,7 +23,14 @@ pub enum ControllerMode {
 
 pub struct RuntimeState {
     mode: RuntimeMode,
-    controllers: AHashMap<ControllerId, ControllerMode>,
+    controllers: AHashMap<ControllerId, ControllerRuntimeState>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ControllerRuntimeState {
+    mode: ControllerMode,
+    left_stick: StickState,
+    right_stick: StickState,
 }
 
 impl RuntimeState {
@@ -48,15 +57,48 @@ impl RuntimeState {
         matches!(self.mode, RuntimeMode::Active)
     }
 
-    pub fn controller_mode(&self, id: ControllerId) -> Option<ControllerMode> {
+    pub fn controller_state(
+        &self,
+        id: ControllerId,
+    ) -> Option<ControllerRuntimeState> {
         self.controllers.get(&id).copied()
     }
 
-    pub fn set_controller_mode(&mut self, id: ControllerId, mode: ControllerMode) {
-        self.controllers.insert(id, mode);
+    pub fn set_controller_state(
+        &mut self,
+        id: ControllerId,
+        state: ControllerRuntimeState,
+    ) {
+        self.controllers.insert(id, state);
     }
 
     pub fn disconnect_controller(&mut self, id: ControllerId) {
         self.controllers.remove(&id);
+    }
+}
+
+impl ControllerRuntimeState {
+    pub fn new(
+        mode: ControllerMode,
+        left_stick: StickState,
+        right_stick: StickState,
+    ) -> Self {
+        Self {
+            mode,
+            left_stick,
+            right_stick,
+        }
+    }
+
+    pub fn mode(&self) -> ControllerMode {
+        self.mode
+    }
+
+    pub fn left_stick(&self) -> StickState {
+        self.left_stick
+    }
+
+    pub fn right_stick(&self) -> StickState {
+        self.right_stick
     }
 }

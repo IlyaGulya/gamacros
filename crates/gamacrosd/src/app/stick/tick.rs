@@ -142,6 +142,21 @@ impl StickProcessor {
         })
     }
 
+    pub fn has_active_repeats_for_side(
+        &self,
+        id: ControllerId,
+        side: StickSide,
+    ) -> bool {
+        let Some(ctrl) = self.controllers.get(&id) else {
+            return false;
+        };
+        let side = &ctrl.sides[super::util::side_index(&side)];
+
+        side.arrows.iter().any(|s| s.is_some())
+            || side.volume.iter().any(|s| s.is_some())
+            || side.brightness.iter().any(|s| s.is_some())
+    }
+
     fn tick_arrows(
         &mut self,
         now: std::time::Instant,

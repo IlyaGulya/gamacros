@@ -7,7 +7,9 @@ use colored::Colorize;
 use gamacros_control::KeyCombo;
 use gamacros_bit_mask::Bitmask;
 use gamacros_gamepad::{Button, ControllerId, ControllerInfo, Axis as CtrlAxis};
-use gamacros_workspace::{ButtonAction, ControllerSettings, Profile, StickMode};
+use gamacros_workspace::{
+    ButtonAction, ControllerSettings, Profile, StickMode, StickSide,
+};
 
 use crate::{app::ButtonPhase, print_debug, print_info};
 use super::binding::{BindingContext, BindingSource};
@@ -147,19 +149,45 @@ impl Gamacros {
             .is_some_and(|state| !state.pressed.is_empty())
     }
 
-    pub fn controller_has_axis_activity(
-        &self,
-        id: ControllerId,
-        threshold: f32,
-    ) -> bool {
-        self.controllers.get(&id).is_some_and(|state| {
-            state.axes.iter().any(|value| value.abs() >= threshold)
-        })
-    }
-
     pub fn controller_has_repeats(&self, id: ControllerId) -> bool {
         self.button_repeats.keys().any(|(cid, _)| *cid == id)
             || self.sticks.borrow().has_active_repeats_for(id)
+    }
+
+    pub fn controller_stick_has_repeats(
+        &self,
+        id: ControllerId,
+        side: StickSide,
+    ) -> bool {
+        self.sticks.borrow().has_active_repeats_for_side(id, side)
+    }
+
+    pub fn controller_stick_has_axis_activity(
+        &self,
+        id: ControllerId,
+        side: StickSide,
+        threshold: f32,
+    ) -> bool {
+        let Some(state) = self.controllers.get(&id) else {
+            return false;
+        };
+        let (x, y) = match side {
+            StickSide::Left => (state.axes[0], state.axes[1]),
+            StickSide::Right => (state.axes[2], state.axes[3]),
+        };
+        x.abs() >= threshold || y.abs() >= threshold
+    }
+
+    pub fn controller_stick_mode(
+        &self,
+        _id: ControllerId,
+        side: StickSide,
+    ) -> Option<&StickMode> {
+        self.get_compiled_stick_rules()
+            .and_then(|rules| match side {
+                StickSide::Left => rules.left(),
+                StickSide::Right => rules.right(),
+            })
     }
 
     pub fn set_active_app(&mut self, app: &str) {
