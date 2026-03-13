@@ -1,15 +1,13 @@
 use colored::Colorize;
 use gamacros_gamepad::{ControllerEvent, ControllerManager};
-use gamacros_workspace::ProfileEvent;
-
-use crate::activity::ActivityEvent;
-use crate::api::Command as ApiCommand;
 use crate::app::{ButtonPhase, Effect, Gamacros};
 use crate::domain::{
-    ControllerRuntimeState, push_controller_state_update, resolve_controller_state,
-    reduce_timer_event, DomainEvent, RuntimeMode, RuntimeState, SystemEvent, WakeIntent, WakeState,
+    ControllerRuntimeState, push_controller_state_update, reduce_activity_event,
+    reduce_api_command, reduce_profile_event, resolve_controller_state,
+    reduce_timer_event, DomainEvent, RuntimeMode, RuntimeState, SystemEvent,
+    WakeIntent, WakeState,
 };
-use crate::{print_debug, print_error, print_info};
+use crate::print_debug;
 
 pub enum DomainControl {
     Continue,
@@ -51,14 +49,6 @@ impl DomainStep {
         self.next_mode = Some(mode);
         self
     }
-}
-
-fn transition_to_active(step: &mut DomainStep) {
-    step.next_mode = Some(RuntimeMode::Active);
-}
-
-fn transition_to_awaiting_profile(step: &mut DomainStep) {
-    step.next_mode = Some(RuntimeMode::AwaitingProfile);
 }
 
 fn transition_to_shutting_down(step: DomainStep) -> DomainStep {
@@ -139,66 +129,6 @@ fn reduce_controller_event(
                 );
             }
         }
-    }
-}
-
-fn reduce_activity_event(
-    activity_event: ActivityEvent,
-    step: &mut DomainStep,
-    gamacros: &mut Gamacros,
-) {
-    let ActivityEvent::DidActivateApplication(bundle_id) = activity_event else {
-        return;
-    };
-    gamacros.set_active_app(&bundle_id);
-    step.set_shell = Some(gamacros.current_shell());
-    step.wake_intents.push(WakeIntent::Reschedule);
-}
-
-fn reduce_profile_event(
-    profile_event: ProfileEvent,
-    step: &mut DomainStep,
-    gamacros: &mut Gamacros,
-) {
-    match profile_event {
-        ProfileEvent::Changed(workspace) => {
-            print_info!("profile changed, updating workspace");
-            gamacros.set_workspace(workspace);
-            step.set_shell = Some(gamacros.current_shell());
-            step.wake_intents.push(WakeIntent::Reschedule);
-            transition_to_active(step);
-        }
-        ProfileEvent::Removed => {
-            gamacros.remove_workspace();
-            step.set_shell = Some(gamacros.current_shell());
-            step.wake_intents.push(WakeIntent::Reschedule);
-            transition_to_awaiting_profile(step);
-        }
-        ProfileEvent::Error(error) => {
-            print_error!("profile error: {error}");
-        }
-    }
-}
-
-fn reduce_api_command(
-    command: ApiCommand,
-    step: &mut DomainStep,
-    manager: &ControllerManager,
-) {
-    match command {
-        ApiCommand::Rumble { id, ms } => match id {
-            Some(controller_id) => {
-                step.effects.push(Effect::Rumble {
-                    id: controller_id,
-                    ms,
-                });
-            }
-            None => {
-                for info in manager.controllers() {
-                    step.effects.push(Effect::Rumble { id: info.id, ms });
-                }
-            }
-        },
     }
 }
 

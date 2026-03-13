@@ -1,4 +1,7 @@
+mod activity_reduce;
+mod api_reduce;
 mod event;
+mod profile_reduce;
 mod reduce;
 mod stick_reduce;
 mod stick_state;
@@ -6,7 +9,10 @@ mod state;
 mod timer_reduce;
 mod wake;
 
+pub use activity_reduce::reduce_activity_event;
+pub use api_reduce::reduce_api_command;
 pub use event::{DomainEvent, SystemEvent, TimerEvent};
+pub use profile_reduce::reduce_profile_event;
 pub use reduce::{reduce_event, DomainControl, DomainStep};
 pub use stick_reduce::{push_controller_state_update, resolve_controller_state};
 pub use stick_state::{resolve_stick_state, stick_transition, StickActivity};
