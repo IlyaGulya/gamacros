@@ -237,4 +237,52 @@ mod tests {
             [WakeTransition::DisableFastMode]
         ));
     }
+
+    #[test]
+    fn reduce_event_shutdown_requested_breaks_and_sets_shutting_down_mode() {
+        let mut gamacros = Gamacros::new();
+        let manager = ControllerManager::new().expect("manager init");
+        let runtime_state = RuntimeState::new(RuntimeMode::Active);
+        let wake_state = WakeState::new(std::time::Instant::now());
+
+        let step = reduce_event(
+            DomainEvent::System(SystemEvent::ShutdownRequested),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+
+        assert!(matches!(step.control, DomainControl::Break));
+        assert!(matches!(
+            step.transition.mode,
+            Some(ModeTransition::Set(RuntimeMode::ShuttingDown))
+        ));
+    }
+
+    #[test]
+    fn reduce_event_ignores_controller_input_while_shutting_down() {
+        let mut gamacros = Gamacros::new();
+        gamacros.set_workspace(profile_with_common_rules());
+        gamacros.add_controller(controller_info(7));
+        let manager = ControllerManager::new().expect("manager init");
+        let runtime_state = RuntimeState::new(RuntimeMode::ShuttingDown);
+        let wake_state = WakeState::new(std::time::Instant::now());
+
+        let step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::ButtonPressed {
+                id: 7,
+                button: Button::A,
+            }),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+
+        assert!(matches!(step.control, DomainControl::Continue));
+        assert!(step.transition.effects.is_empty());
+        assert!(step.transition.controller_updates.is_empty());
+        assert!(step.transition.wake.is_empty());
+    }
 }
