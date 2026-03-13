@@ -12,14 +12,16 @@ pub fn reduce_api_command(
     match command {
         ApiCommand::Rumble { id, ms } => match id {
             Some(controller_id) => {
-                step.effects.push(Effect::Rumble {
+                step.transition.effects.push(Effect::Rumble {
                     id: controller_id,
                     ms,
                 });
             }
             None => {
                 for info in manager.controllers() {
-                    step.effects.push(Effect::Rumble { id: info.id, ms });
+                    step.transition
+                        .effects
+                        .push(Effect::Rumble { id: info.id, ms });
                 }
             }
         },

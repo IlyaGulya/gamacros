@@ -14,17 +14,26 @@ pub fn reduce_profile_event(
         ProfileEvent::Changed(workspace) => {
             print_info!("profile changed, updating workspace");
             gamacros.set_workspace(workspace);
-            step.set_shell = Some(gamacros.current_shell());
-            step.wake_intents
+            step.transition.shell = Some(crate::domain::ShellTransition::Set(
+                gamacros.current_shell(),
+            ));
+            step.transition
+                .wake_intents
                 .push(crate::domain::WakeIntent::Reschedule);
-            step.next_mode = Some(RuntimeMode::Active);
+            step.transition.mode =
+                Some(crate::domain::ModeTransition::Set(RuntimeMode::Active));
         }
         ProfileEvent::Removed => {
             gamacros.remove_workspace();
-            step.set_shell = Some(gamacros.current_shell());
-            step.wake_intents
+            step.transition.shell = Some(crate::domain::ShellTransition::Set(
+                gamacros.current_shell(),
+            ));
+            step.transition
+                .wake_intents
                 .push(crate::domain::WakeIntent::Reschedule);
-            step.next_mode = Some(RuntimeMode::AwaitingProfile);
+            step.transition.mode = Some(crate::domain::ModeTransition::Set(
+                RuntimeMode::AwaitingProfile,
+            ));
         }
         ProfileEvent::Error(error) => {
             print_error!("profile error: {error}");

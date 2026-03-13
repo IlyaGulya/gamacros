@@ -17,7 +17,9 @@ pub fn reduce_timer_event(
         TimerEvent::Wake => {
             if !runtime_state.handles_timer_wake() {
                 if wake_state.fast_mode {
-                    step.wake_intents.push(WakeIntent::DisableFastMode);
+                    step.transition
+                        .wake_intents
+                        .push(WakeIntent::DisableFastMode);
                 }
                 print_debug!(
                     "ignoring timer wake while runtime mode is {:?}",
@@ -38,33 +40,40 @@ pub fn reduce_timer_event(
                         "wake timer: tick due lateness_us={}",
                         now.duration_since(due).as_micros()
                     );
-                    step.effects.extend(gamacros.on_tick_effects());
+                    step.transition.effects.extend(gamacros.on_tick_effects());
                     if gamacros.wants_fast_tick() {
                         let fast_until = now + Duration::from_millis(250);
-                        step.wake_intents
+                        step.transition
+                            .wake_intents
                             .push(WakeIntent::EnableFastModeUntil(fast_until));
                         print_debug!(
                             "wake timer: enabling fast mode until {fast_until:?}"
                         );
                     } else if wake_state.fast_mode && now >= wake_state.fast_until {
-                        step.wake_intents.push(WakeIntent::DisableFastMode);
+                        step.transition
+                            .wake_intents
+                            .push(WakeIntent::DisableFastMode);
                         print_debug!("wake timer: disabling fast mode");
                     }
                 }
             }
             let repeats_started_at = std::time::Instant::now();
-            step.effects.extend(gamacros.due_repeat_effects(now));
+            step.transition
+                .effects
+                .extend(gamacros.due_repeat_effects(now));
             print_debug!(
                 "wake timer: stick repeats elapsed_us={}",
                 repeats_started_at.elapsed().as_micros()
             );
             let button_repeats_started_at = std::time::Instant::now();
-            step.effects.extend(gamacros.button_repeat_effects(now));
+            step.transition
+                .effects
+                .extend(gamacros.button_repeat_effects(now));
             print_debug!(
                 "wake timer: button repeats elapsed_us={}",
                 button_repeats_started_at.elapsed().as_micros()
             );
-            step.wake_intents.push(WakeIntent::Reschedule);
+            step.transition.wake_intents.push(WakeIntent::Reschedule);
         }
     }
 }

@@ -1,11 +1,10 @@
 use colored::Colorize;
 use gamacros_gamepad::{ControllerEvent, ControllerManager};
-use crate::app::{ButtonPhase, Effect, Gamacros};
+use crate::app::{ButtonPhase, Gamacros};
 use crate::domain::{
-    ControllerRuntimeState, push_controller_state_update, reduce_activity_event,
-    reduce_api_command, reduce_profile_event, resolve_controller_state,
-    reduce_timer_event, DomainEvent, RuntimeMode, RuntimeState, SystemEvent,
-    WakeIntent, WakeState,
+    push_controller_state_update, reduce_activity_event, reduce_api_command,
+    reduce_profile_event, resolve_controller_state, reduce_timer_event, DomainEvent,
+    RuntimeMode, RuntimeState, SystemEvent, Transition, WakeIntent, WakeState,
 };
 use crate::print_debug;
 
@@ -15,25 +14,14 @@ pub enum DomainControl {
 }
 
 pub struct DomainStep {
-    pub effects: Vec<Effect>,
-    pub set_shell: Option<Option<Box<str>>>,
-    pub wake_intents: Vec<WakeIntent>,
-    pub controller_updates: Vec<(
-        gamacros_gamepad::ControllerId,
-        Option<ControllerRuntimeState>,
-    )>,
-    pub next_mode: Option<RuntimeMode>,
+    pub transition: Transition,
     pub control: DomainControl,
 }
 
 impl DomainStep {
     pub fn continue_() -> Self {
         Self {
-            effects: Vec::new(),
-            set_shell: None,
-            wake_intents: Vec::new(),
-            controller_updates: Vec::new(),
-            next_mode: None,
+            transition: Transition::new(),
             control: DomainControl::Continue,
         }
     }
@@ -46,7 +34,7 @@ impl DomainStep {
     }
 
     fn with_mode(mut self, mode: RuntimeMode) -> Self {
-        self.next_mode = Some(mode);
+        self.transition.mode = Some(crate::domain::ModeTransition::Set(mode));
         self
     }
 }
@@ -84,36 +72,41 @@ fn reduce_controller_event(
                 id,
                 resolve_controller_state(gamacros, id),
             );
-            step.wake_intents.push(WakeIntent::Reschedule);
+            step.transition.wake_intents.push(WakeIntent::Reschedule);
         }
         ControllerEvent::Disconnected(id) => {
             gamacros.remove_controller(id);
             gamacros.on_controller_disconnected(id);
             print_debug!("controller state transition: id={id} -> Disconnected");
-            step.controller_updates.push((id, None));
-            step.wake_intents.push(WakeIntent::Reschedule);
+            step.transition.controller_updates.push(
+                crate::domain::ControllerTransition {
+                    id,
+                    next_state: None,
+                },
+            );
+            step.transition.wake_intents.push(WakeIntent::Reschedule);
         }
         ControllerEvent::ButtonPressed { id, button } => {
             if !runtime_state.allows_input_actions() {
                 *step = ignored_for_mode(runtime_state, "button press");
                 return;
             }
-            step.effects =
+            step.transition.effects =
                 gamacros.on_button_effects(id, button, ButtonPhase::Pressed);
             let next_state = resolve_controller_state(gamacros, id);
             push_controller_state_update(step, runtime_state, id, next_state);
-            step.wake_intents.push(WakeIntent::Reschedule);
+            step.transition.wake_intents.push(WakeIntent::Reschedule);
         }
         ControllerEvent::ButtonReleased { id, button } => {
             if !runtime_state.allows_input_actions() {
                 *step = ignored_for_mode(runtime_state, "button release");
                 return;
             }
-            step.effects =
+            step.transition.effects =
                 gamacros.on_button_effects(id, button, ButtonPhase::Released);
             let next_state = resolve_controller_state(gamacros, id);
             push_controller_state_update(step, runtime_state, id, next_state);
-            step.wake_intents.push(WakeIntent::Reschedule);
+            step.transition.wake_intents.push(WakeIntent::Reschedule);
         }
         ControllerEvent::AxisMotion { id, axis, value } => {
             print_debug!(
@@ -123,7 +116,7 @@ fn reduce_controller_event(
             let next_state = resolve_controller_state(gamacros, id);
             push_controller_state_update(step, runtime_state, id, next_state);
             if runtime_state.allows_input_actions() && !wake_state.ticking_enabled {
-                step.wake_intents.push(WakeIntent::Reschedule);
+                step.transition.wake_intents.push(WakeIntent::Reschedule);
                 print_debug!(
                     "axis motion armed ticking: controller={id} axis={axis:?} value={value:.3}"
                 );

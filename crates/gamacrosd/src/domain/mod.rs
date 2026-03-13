@@ -7,6 +7,7 @@ mod stick_reduce;
 mod stick_state;
 mod state;
 mod timer_reduce;
+mod transition;
 mod wake;
 
 pub use activity_reduce::reduce_activity_event;
@@ -18,6 +19,7 @@ pub use stick_reduce::{push_controller_state_update, resolve_controller_state};
 pub use stick_state::{resolve_stick_state, stick_transition, StickActivity};
 pub use state::{ControllerMode, ControllerRuntimeState, RuntimeMode, RuntimeState};
 pub use timer_reduce::reduce_timer_event;
+pub use transition::{ControllerTransition, ModeTransition, ShellTransition, Transition};
 pub use wake::{
     apply_wake_intents, overdue_wake_event, reschedule_wake, WakeIntent, WakeState,
 };

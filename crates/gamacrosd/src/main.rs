@@ -208,22 +208,23 @@ fn apply_domain_step(
     action_runner: &mut ActionRunner<'_>,
     wake_state: &mut WakeState,
 ) -> DomainControl {
-    for (id, next_mode) in step.controller_updates {
-        match next_mode {
-            Some(state) => runtime_state.set_controller_state(id, state),
+    for update in step.transition.controller_updates {
+        match update.next_state {
+            Some(state) => runtime_state.set_controller_state(update.id, state),
             None => {
-                runtime_state.disconnect_controller(id);
+                runtime_state.disconnect_controller(update.id);
             }
         }
     }
-    if let Some(next_mode) = step.next_mode {
+    if let Some(crate::domain::ModeTransition::Set(next_mode)) = step.transition.mode
+    {
         runtime_state.set_mode(next_mode);
     }
-    if let Some(shell) = step.set_shell {
+    if let Some(crate::domain::ShellTransition::Set(shell)) = step.transition.shell {
         action_runner.set_shell(shell);
     }
-    run_effects(action_runner, step.effects);
-    apply_wake_intents(wake_state, step.wake_intents);
+    run_effects(action_runner, step.transition.effects);
+    apply_wake_intents(wake_state, step.transition.wake_intents);
     step.control
 }
 

@@ -33,7 +33,7 @@ fn apply_stick_transition_intents(
                 next.side,
                 next.mode
             );
-            step.wake_intents.push(WakeIntent::Reschedule);
+            step.transition.wake_intents.push(WakeIntent::Reschedule);
         }
         (
             Some(crate::domain::StickActivity::Active),
@@ -44,7 +44,7 @@ fn apply_stick_transition_intents(
                 next.side,
                 next.mode
             );
-            step.wake_intents.push(WakeIntent::Reschedule);
+            step.transition.wake_intents.push(WakeIntent::Reschedule);
         }
         (_, crate::domain::StickActivity::Neutral) => {
             print_debug!(
@@ -140,5 +140,10 @@ pub fn push_controller_state_update(
             next_state.right_stick().activity,
         );
     }
-    step.controller_updates.push((id, Some(next_state)));
+    step.transition
+        .controller_updates
+        .push(crate::domain::ControllerTransition {
+            id,
+            next_state: Some(next_state),
+        });
 }

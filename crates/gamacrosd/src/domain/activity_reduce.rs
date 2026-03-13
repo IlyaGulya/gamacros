@@ -11,6 +11,8 @@ pub fn reduce_activity_event(
         return;
     };
     gamacros.set_active_app(&bundle_id);
-    step.set_shell = Some(gamacros.current_shell());
-    step.wake_intents.push(WakeIntent::Reschedule);
+    step.transition.shell = Some(crate::domain::ShellTransition::Set(
+        gamacros.current_shell(),
+    ));
+    step.transition.wake_intents.push(WakeIntent::Reschedule);
 }
