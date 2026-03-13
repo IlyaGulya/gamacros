@@ -285,4 +285,77 @@ mod tests {
         assert!(step.transition.controller_updates.is_empty());
         assert!(step.transition.wake.is_empty());
     }
+
+    #[test]
+    fn reduce_event_activity_then_profile_then_controller_forms_expected_trace() {
+        let mut gamacros = Gamacros::new();
+        let manager = ControllerManager::new().expect("manager init");
+        let wake_state = WakeState::new(std::time::Instant::now());
+        let mut runtime_state = RuntimeState::new(RuntimeMode::AwaitingProfile);
+
+        let activity_step = reduce_event(
+            DomainEvent::Activity(
+                crate::activity::ActivityEvent::DidActivateApplication(
+                    "ru.keepcoder.Telegram".into(),
+                ),
+            ),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+        assert!(matches!(
+            activity_step.transition.shell,
+            Some(ShellTransition::Set(_))
+        ));
+
+        let profile_step = reduce_event(
+            DomainEvent::Profile(ProfileEvent::Changed(profile_with_common_rules())),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+        assert!(matches!(
+            profile_step.transition.mode,
+            Some(ModeTransition::Set(RuntimeMode::Active))
+        ));
+
+        runtime_state.set_mode(RuntimeMode::Active);
+        gamacros.set_workspace(profile_with_common_rules());
+        gamacros.add_controller(controller_info(42));
+        runtime_state.set_controller_state(
+            42,
+            crate::domain::ControllerRuntimeState::new(
+                ControllerMode::ConnectedIdle,
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    42,
+                    gamacros_workspace::StickSide::Left,
+                ),
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    42,
+                    gamacros_workspace::StickSide::Right,
+                ),
+            ),
+        );
+
+        let controller_step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::ButtonPressed {
+                id: 42,
+                button: Button::A,
+            }),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+
+        assert_eq!(controller_step.transition.controller_updates.len(), 1);
+        assert!(matches!(
+            controller_step.transition.controller_updates[0].next_state,
+            Some(state) if state.mode() == ControllerMode::ButtonsActive
+        ));
+    }
 }
