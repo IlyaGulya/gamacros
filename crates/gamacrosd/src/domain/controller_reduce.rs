@@ -83,3 +83,68 @@ pub fn reduce_controller_event(
 
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{ControllerMode, RuntimeMode};
+    use gamacros_gamepad::{Button, ControllerInfo};
+
+    fn controller_info(id: u32) -> ControllerInfo {
+        ControllerInfo {
+            id,
+            name: "Test Controller".into(),
+            supports_rumble: false,
+            vendor_id: 1,
+            product_id: 1,
+        }
+    }
+
+    #[test]
+    fn ignores_button_press_outside_active_runtime() {
+        let mut step = DomainStep::continue_();
+        let mut gamacros = Gamacros::new();
+        gamacros.add_controller(controller_info(1));
+        let runtime_state = RuntimeState::new(RuntimeMode::AwaitingProfile);
+        let wake_state = WakeState::new(std::time::Instant::now());
+
+        let ignored = reduce_controller_event(
+            ControllerEvent::ButtonPressed {
+                id: 1,
+                button: Button::A,
+            },
+            &mut step,
+            &mut gamacros,
+            &runtime_state,
+            &wake_state,
+            |_| DomainStep::continue_(),
+        );
+
+        assert!(ignored.is_some());
+        assert!(step.transition.effects.is_empty());
+    }
+
+    #[test]
+    fn connect_event_enqueues_controller_state_update() {
+        let mut step = DomainStep::continue_();
+        let mut gamacros = Gamacros::new();
+        let runtime_state = RuntimeState::new(RuntimeMode::Active);
+        let wake_state = WakeState::new(std::time::Instant::now());
+
+        let ignored = reduce_controller_event(
+            ControllerEvent::Connected(controller_info(1)),
+            &mut step,
+            &mut gamacros,
+            &runtime_state,
+            &wake_state,
+            |_| DomainStep::continue_(),
+        );
+
+        assert!(ignored.is_none());
+        assert_eq!(step.transition.controller_updates.len(), 1);
+        assert!(matches!(
+            step.transition.controller_updates[0].next_state,
+            Some(state) if state.mode() == ControllerMode::ConnectedIdle
+        ));
+    }
+}
