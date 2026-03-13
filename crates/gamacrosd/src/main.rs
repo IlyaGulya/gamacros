@@ -224,7 +224,7 @@ fn apply_domain_step(
         action_runner.set_shell(shell);
     }
     run_effects(action_runner, step.transition.effects);
-    apply_wake_intents(wake_state, step.transition.wake_intents);
+    apply_wake_intents(wake_state, step.transition.wake);
     step.control
 }
 

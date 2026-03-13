@@ -4,6 +4,7 @@ use colored::Colorize;
 
 use crate::app::Gamacros;
 use crate::domain::{DomainEvent, TimerEvent};
+use crate::domain::transition::WakeTransition;
 use crate::print_debug;
 
 pub struct WakeState {
@@ -20,12 +21,6 @@ pub struct WakePlan {
     pub next_due: Option<Instant>,
 }
 
-pub enum WakeIntent {
-    Reschedule,
-    EnableFastModeUntil(Instant),
-    DisableFastMode,
-}
-
 impl WakeState {
     pub fn new(now: Instant) -> Self {
         Self {
@@ -38,17 +33,17 @@ impl WakeState {
     }
 }
 
-pub fn apply_wake_intents(wake_state: &mut WakeState, intents: Vec<WakeIntent>) {
+pub fn apply_wake_intents(wake_state: &mut WakeState, intents: Vec<WakeTransition>) {
     for intent in intents {
         match intent {
-            WakeIntent::Reschedule => {
+            WakeTransition::Reschedule => {
                 wake_state.need_reschedule = true;
             }
-            WakeIntent::EnableFastModeUntil(until) => {
+            WakeTransition::EnableFastModeUntil(until) => {
                 wake_state.fast_mode = true;
                 wake_state.fast_until = until;
             }
-            WakeIntent::DisableFastMode => {
+            WakeTransition::DisableFastMode => {
                 wake_state.fast_mode = false;
             }
         }

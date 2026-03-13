@@ -1,6 +1,6 @@
 use crate::activity::ActivityEvent;
 use crate::app::Gamacros;
-use crate::domain::{DomainStep, WakeIntent};
+use crate::domain::{DomainStep, WakeTransition};
 
 pub fn reduce_activity_event(
     activity_event: ActivityEvent,
@@ -14,5 +14,5 @@ pub fn reduce_activity_event(
     step.transition.shell = Some(crate::domain::ShellTransition::Set(
         gamacros.current_shell(),
     ));
-    step.transition.wake_intents.push(WakeIntent::Reschedule);
+    step.transition.wake.push(WakeTransition::Reschedule);
 }

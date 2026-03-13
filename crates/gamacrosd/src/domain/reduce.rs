@@ -1,10 +1,10 @@
 use colored::Colorize;
-use gamacros_gamepad::{ControllerEvent, ControllerManager};
-use crate::app::{ButtonPhase, Gamacros};
+use gamacros_gamepad::ControllerManager;
+use crate::app::Gamacros;
 use crate::domain::{
-    push_controller_state_update, reduce_activity_event, reduce_api_command,
-    reduce_profile_event, resolve_controller_state, reduce_timer_event, DomainEvent,
-    RuntimeMode, RuntimeState, SystemEvent, Transition, WakeIntent, WakeState,
+    reduce_activity_event, reduce_api_command, reduce_controller_event,
+    reduce_profile_event, reduce_timer_event, DomainEvent, RuntimeMode,
+    RuntimeState, SystemEvent, Transition, WakeState,
 };
 use crate::print_debug;
 
@@ -51,80 +51,6 @@ fn ignored_for_mode(runtime_state: &RuntimeState, what: &str) -> DomainStep {
     DomainStep::continue_()
 }
 
-fn reduce_controller_event(
-    controller_event: ControllerEvent,
-    step: &mut DomainStep,
-    gamacros: &mut Gamacros,
-    runtime_state: &RuntimeState,
-    wake_state: &WakeState,
-) {
-    match controller_event {
-        ControllerEvent::Connected(info) => {
-            let id = info.id;
-            if gamacros.is_known(id) {
-                return;
-            }
-
-            gamacros.add_controller(info);
-            push_controller_state_update(
-                step,
-                runtime_state,
-                id,
-                resolve_controller_state(gamacros, id),
-            );
-            step.transition.wake_intents.push(WakeIntent::Reschedule);
-        }
-        ControllerEvent::Disconnected(id) => {
-            gamacros.remove_controller(id);
-            gamacros.on_controller_disconnected(id);
-            print_debug!("controller state transition: id={id} -> Disconnected");
-            step.transition.controller_updates.push(
-                crate::domain::ControllerTransition {
-                    id,
-                    next_state: None,
-                },
-            );
-            step.transition.wake_intents.push(WakeIntent::Reschedule);
-        }
-        ControllerEvent::ButtonPressed { id, button } => {
-            if !runtime_state.allows_input_actions() {
-                *step = ignored_for_mode(runtime_state, "button press");
-                return;
-            }
-            step.transition.effects =
-                gamacros.on_button_effects(id, button, ButtonPhase::Pressed);
-            let next_state = resolve_controller_state(gamacros, id);
-            push_controller_state_update(step, runtime_state, id, next_state);
-            step.transition.wake_intents.push(WakeIntent::Reschedule);
-        }
-        ControllerEvent::ButtonReleased { id, button } => {
-            if !runtime_state.allows_input_actions() {
-                *step = ignored_for_mode(runtime_state, "button release");
-                return;
-            }
-            step.transition.effects =
-                gamacros.on_button_effects(id, button, ButtonPhase::Released);
-            let next_state = resolve_controller_state(gamacros, id);
-            push_controller_state_update(step, runtime_state, id, next_state);
-            step.transition.wake_intents.push(WakeIntent::Reschedule);
-        }
-        ControllerEvent::AxisMotion { id, axis, value } => {
-            print_debug!(
-                "domain event: axis motion controller={id} axis={axis:?} value={value:.3}"
-            );
-            gamacros.on_axis_motion(id, axis, value);
-            let next_state = resolve_controller_state(gamacros, id);
-            push_controller_state_update(step, runtime_state, id, next_state);
-            if runtime_state.allows_input_actions() && !wake_state.ticking_enabled {
-                step.transition.wake_intents.push(WakeIntent::Reschedule);
-                print_debug!(
-                    "axis motion armed ticking: controller={id} axis={axis:?} value={value:.3}"
-                );
-            }
-        }
-    }
-}
-
 pub fn reduce_event(
     event: DomainEvent,
     gamacros: &mut Gamacros,
@@ -143,13 +69,16 @@ pub fn reduce_event(
 
     match event {
         DomainEvent::Controller(controller_event) => {
-            reduce_controller_event(
+            if let Some(ignored_step) = reduce_controller_event(
                 controller_event,
                 &mut step,
                 gamacros,
                 runtime_state,
                 wake_state,
-            );
+                |what| ignored_for_mode(runtime_state, what),
+            ) {
+                return ignored_step;
+            }
         }
         DomainEvent::Activity(activity_event) => {
             reduce_activity_event(activity_event, &mut step, gamacros);

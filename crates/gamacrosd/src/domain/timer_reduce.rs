@@ -3,7 +3,7 @@ use std::time::Duration;
 use colored::Colorize;
 
 use crate::app::Gamacros;
-use crate::domain::{DomainStep, RuntimeState, TimerEvent, WakeIntent, WakeState};
+use crate::domain::{DomainStep, RuntimeState, TimerEvent, WakeState, WakeTransition};
 use crate::print_debug;
 
 pub fn reduce_timer_event(
@@ -17,9 +17,7 @@ pub fn reduce_timer_event(
         TimerEvent::Wake => {
             if !runtime_state.handles_timer_wake() {
                 if wake_state.fast_mode {
-                    step.transition
-                        .wake_intents
-                        .push(WakeIntent::DisableFastMode);
+                    step.transition.wake.push(WakeTransition::DisableFastMode);
                 }
                 print_debug!(
                     "ignoring timer wake while runtime mode is {:?}",
@@ -44,15 +42,13 @@ pub fn reduce_timer_event(
                     if gamacros.wants_fast_tick() {
                         let fast_until = now + Duration::from_millis(250);
                         step.transition
-                            .wake_intents
-                            .push(WakeIntent::EnableFastModeUntil(fast_until));
+                            .wake
+                            .push(WakeTransition::EnableFastModeUntil(fast_until));
                         print_debug!(
                             "wake timer: enabling fast mode until {fast_until:?}"
                         );
                     } else if wake_state.fast_mode && now >= wake_state.fast_until {
-                        step.transition
-                            .wake_intents
-                            .push(WakeIntent::DisableFastMode);
+                        step.transition.wake.push(WakeTransition::DisableFastMode);
                         print_debug!("wake timer: disabling fast mode");
                     }
                 }
@@ -73,7 +69,7 @@ pub fn reduce_timer_event(
                 "wake timer: button repeats elapsed_us={}",
                 button_repeats_started_at.elapsed().as_micros()
             );
-            step.transition.wake_intents.push(WakeIntent::Reschedule);
+            step.transition.wake.push(WakeTransition::Reschedule);
         }
     }
 }
