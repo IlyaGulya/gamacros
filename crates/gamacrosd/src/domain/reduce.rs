@@ -8,9 +8,9 @@ use crate::activity::ActivityEvent;
 use crate::api::Command as ApiCommand;
 use crate::app::{ButtonPhase, Effect, Gamacros};
 use crate::domain::{
-    resolve_stick_state, stick_transition, ControllerMode, ControllerRuntimeState,
-    DomainEvent, RuntimeMode, RuntimeState, StickActivity, SystemEvent, TimerEvent,
-    WakeIntent, WakeState,
+    ControllerRuntimeState, push_controller_state_update, resolve_controller_state,
+    DomainEvent, RuntimeMode, RuntimeState, SystemEvent, TimerEvent, WakeIntent,
+    WakeState,
 };
 use crate::{print_debug, print_error, print_info};
 
@@ -76,97 +76,6 @@ fn ignored_for_mode(runtime_state: &RuntimeState, what: &str) -> DomainStep {
     DomainStep::continue_()
 }
 
-fn resolve_controller_mode(
-    gamacros: &Gamacros,
-    id: gamacros_gamepad::ControllerId,
-) -> ControllerMode {
-    let has_buttons = gamacros.controller_has_pressed_buttons(id);
-    let left_stick =
-        resolve_stick_state(gamacros, id, gamacros_workspace::StickSide::Left);
-    let right_stick =
-        resolve_stick_state(gamacros, id, gamacros_workspace::StickSide::Right);
-    let has_stick_activity = matches!(
-        left_stick.activity,
-        StickActivity::Active | StickActivity::Repeating
-    ) || matches!(
-        right_stick.activity,
-        StickActivity::Active | StickActivity::Repeating
-    );
-    let has_stick_repeats = matches!(left_stick.activity, StickActivity::Repeating)
-        || matches!(right_stick.activity, StickActivity::Repeating);
-    let has_repeats = gamacros.controller_has_repeats(id) || has_stick_repeats;
-
-    print_debug!(
-        "controller state inputs: id={id} buttons={} left_stick={:?}/{:?} right_stick={:?}/{:?} repeats={}",
-        has_buttons,
-        left_stick.mode,
-        left_stick.activity,
-        right_stick.mode,
-        right_stick.activity,
-        has_repeats
-    );
-
-    match (has_buttons, has_stick_activity, has_repeats) {
-        (_, _, true) if has_buttons || has_stick_activity => {
-            ControllerMode::RepeatingWithInput
-        }
-        (_, _, true) => ControllerMode::Repeating,
-        (false, false, false) => ControllerMode::ConnectedIdle,
-        (true, false, false) => ControllerMode::ButtonsActive,
-        (false, true, false) => ControllerMode::AxisActive,
-        (true, true, false) => ControllerMode::MixedInput,
-    }
-}
-
-fn push_controller_mode_update(
-    step: &mut DomainStep,
-    runtime_state: &RuntimeState,
-    id: gamacros_gamepad::ControllerId,
-    next_state: ControllerRuntimeState,
-) {
-    let previous_state = runtime_state.controller_state(id);
-    if previous_state != Some(next_state) {
-        if let Some((prev, next)) = stick_transition(
-            previous_state.map(|state| state.left_stick()),
-            next_state.left_stick(),
-        ) {
-            print_debug!(
-                "left stick transition: controller={id} prev={prev:?} next={next:?}"
-            );
-        }
-        if let Some((prev, next)) = stick_transition(
-            previous_state.map(|state| state.right_stick()),
-            next_state.right_stick(),
-        ) {
-            print_debug!(
-                "right stick transition: controller={id} prev={prev:?} next={next:?}"
-            );
-        }
-        print_debug!(
-            "controller state transition: id={id} prev={:?} -> next={:?} left={:?}/{:?} right={:?}/{:?}",
-            previous_state.map(|state| state.mode()),
-            next_state.mode(),
-            next_state.left_stick().mode,
-            next_state.left_stick().activity,
-            next_state.right_stick().mode,
-            next_state.right_stick().activity,
-        );
-    }
-    step.controller_updates.push((id, Some(next_state)));
-}
-
-fn resolve_controller_state(
-    gamacros: &Gamacros,
-    id: gamacros_gamepad::ControllerId,
-) -> ControllerRuntimeState {
-    let left_stick =
-        resolve_stick_state(gamacros, id, gamacros_workspace::StickSide::Left);
-    let right_stick =
-        resolve_stick_state(gamacros, id, gamacros_workspace::StickSide::Right);
-    let mode = resolve_controller_mode(gamacros, id);
-    ControllerRuntimeState::new(mode, left_stick, right_stick)
-}
-
 pub fn reduce_event(
     event: DomainEvent,
     gamacros: &mut Gamacros,
@@ -192,7 +101,7 @@ pub fn reduce_event(
                 }
 
                 gamacros.add_controller(info);
-                push_controller_mode_update(
+                push_controller_state_update(
                     &mut step,
                     runtime_state,
                     id,
@@ -214,7 +123,7 @@ pub fn reduce_event(
                 step.effects =
                     gamacros.on_button_effects(id, button, ButtonPhase::Pressed);
                 let next_state = resolve_controller_state(gamacros, id);
-                push_controller_mode_update(
+                push_controller_state_update(
                     &mut step,
                     runtime_state,
                     id,
@@ -229,7 +138,7 @@ pub fn reduce_event(
                 step.effects =
                     gamacros.on_button_effects(id, button, ButtonPhase::Released);
                 let next_state = resolve_controller_state(gamacros, id);
-                push_controller_mode_update(
+                push_controller_state_update(
                     &mut step,
                     runtime_state,
                     id,
@@ -243,7 +152,7 @@ pub fn reduce_event(
                 );
                 gamacros.on_axis_motion(id, axis, value);
                 let next_state = resolve_controller_state(gamacros, id);
-                push_controller_mode_update(
+                push_controller_state_update(
                     &mut step,
                     runtime_state,
                     id,
