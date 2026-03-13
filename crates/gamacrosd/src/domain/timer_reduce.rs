@@ -73,3 +73,32 @@ pub fn reduce_timer_event(
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{RuntimeMode, RuntimeState};
+
+    #[test]
+    fn wake_timer_disables_fast_mode_outside_active_runtime() {
+        let mut step = DomainStep::continue_();
+        let mut gamacros = Gamacros::new();
+        let runtime_state = RuntimeState::new(RuntimeMode::AwaitingProfile);
+        let mut wake_state = WakeState::new(std::time::Instant::now());
+        wake_state.fast_mode = true;
+
+        reduce_timer_event(
+            TimerEvent::Wake,
+            &mut step,
+            &mut gamacros,
+            &runtime_state,
+            &wake_state,
+        );
+
+        assert!(matches!(
+            step.transition.wake.as_slice(),
+            [WakeTransition::DisableFastMode]
+        ));
+        assert!(step.transition.effects.is_empty());
+    }
+}
