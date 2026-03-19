@@ -108,14 +108,18 @@ pub fn reduce_event(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use ahash::{AHashMap, AHashSet};
 
     use super::*;
     use crate::domain::{
         ControllerMode, ModeTransition, RuntimeMode, ShellTransition, WakeTransition,
     };
+    use gamacros_bit_mask::Bitmask;
+    use gamacros_control::{Key, KeyCombo};
     use gamacros_gamepad::{Button, ControllerEvent, ControllerInfo};
-    use gamacros_workspace::{AppRules, Profile, ProfileEvent};
+    use gamacros_workspace::{AppRules, ButtonAction, ButtonRule, Profile, ProfileEvent};
 
     fn controller_info(id: u32) -> ControllerInfo {
         ControllerInfo {
@@ -130,6 +134,37 @@ mod tests {
     fn profile_with_common_rules() -> Profile {
         let mut rules = AHashMap::new();
         rules.insert("common".into(), AppRules::default());
+
+        Profile {
+            controllers: AHashMap::new(),
+            blacklist: AHashSet::new(),
+            rules,
+            shell: Some("/bin/zsh".into()),
+        }
+    }
+
+    fn profile_with_repeating_button_rule() -> Profile {
+        let mut buttons = AHashMap::new();
+        buttons.insert(
+            Bitmask::new(&[Button::A]),
+            ButtonRule {
+                action: ButtonAction::Keystroke(Arc::new(KeyCombo::from_key(
+                    Key::Unicode('a'),
+                ))),
+                vibrate: None,
+                repeat_delay_ms: Some(1),
+                repeat_interval_ms: Some(1),
+            },
+        );
+
+        let mut rules = AHashMap::new();
+        rules.insert(
+            "common".into(),
+            AppRules {
+                buttons,
+                ..AppRules::default()
+            },
+        );
 
         Profile {
             controllers: AHashMap::new(),
@@ -392,5 +427,155 @@ mod tests {
         assert!(disconnect_step.transition.controller_updates[0]
             .next_state
             .is_none());
+    }
+
+    #[test]
+    fn reduce_event_button_repeat_trace_enters_and_exits_repeating_state() {
+        let mut gamacros = Gamacros::new();
+        gamacros.set_workspace(profile_with_repeating_button_rule());
+        gamacros.add_controller(controller_info(11));
+        let manager = ControllerManager::new().expect("manager init");
+        let wake_state = WakeState::new(std::time::Instant::now());
+        let mut runtime_state = RuntimeState::new(RuntimeMode::Active);
+        runtime_state.set_controller_state(
+            11,
+            crate::domain::ControllerRuntimeState::new(
+                ControllerMode::ConnectedIdle,
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    11,
+                    gamacros_workspace::StickSide::Left,
+                ),
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    11,
+                    gamacros_workspace::StickSide::Right,
+                ),
+            ),
+        );
+
+        let press_step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::ButtonPressed {
+                id: 11,
+                button: Button::A,
+            }),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+        assert!(matches!(
+            press_step.transition.controller_updates[0].next_state,
+            Some(state) if state.mode() == ControllerMode::RepeatingWithInput
+        ));
+
+        runtime_state.set_controller_state(
+            11,
+            press_step.transition.controller_updates[0]
+                .next_state
+                .expect("next state after press"),
+        );
+
+        let release_step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::ButtonReleased {
+                id: 11,
+                button: Button::A,
+            }),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+        assert!(matches!(
+            release_step.transition.controller_updates[0].next_state,
+            Some(state) if state.mode() == ControllerMode::ConnectedIdle
+        ));
+    }
+
+    #[test]
+    fn reduce_event_profile_removed_after_active_runtime_returns_to_awaiting_profile(
+    ) {
+        let mut gamacros = Gamacros::new();
+        gamacros.set_workspace(profile_with_common_rules());
+        let manager = ControllerManager::new().expect("manager init");
+        let runtime_state = RuntimeState::new(RuntimeMode::Active);
+        let wake_state = WakeState::new(std::time::Instant::now());
+
+        let step = reduce_event(
+            DomainEvent::Profile(ProfileEvent::Removed),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+
+        assert!(matches!(
+            step.transition.mode,
+            Some(ModeTransition::Set(RuntimeMode::AwaitingProfile))
+        ));
+        assert!(matches!(
+            step.transition.wake.as_slice(),
+            [WakeTransition::Reschedule]
+        ));
+    }
+
+    #[test]
+    fn reduce_event_axis_then_button_produces_mixed_input_state() {
+        let mut gamacros = Gamacros::new();
+        gamacros.set_workspace(profile_with_common_rules());
+        gamacros.add_controller(controller_info(5));
+        let manager = ControllerManager::new().expect("manager init");
+        let wake_state = WakeState::new(std::time::Instant::now());
+        let mut runtime_state = RuntimeState::new(RuntimeMode::Active);
+        runtime_state.set_controller_state(
+            5,
+            crate::domain::ControllerRuntimeState::new(
+                ControllerMode::ConnectedIdle,
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    5,
+                    gamacros_workspace::StickSide::Left,
+                ),
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    5,
+                    gamacros_workspace::StickSide::Right,
+                ),
+            ),
+        );
+
+        let axis_step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::AxisMotion {
+                id: 5,
+                axis: gamacros_gamepad::Axis::LeftX,
+                value: 0.9,
+            }),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+        runtime_state.set_controller_state(
+            5,
+            axis_step.transition.controller_updates[0]
+                .next_state
+                .expect("axis state"),
+        );
+
+        let button_step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::ButtonPressed {
+                id: 5,
+                button: Button::A,
+            }),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+
+        assert!(matches!(
+            button_step.transition.controller_updates[0].next_state,
+            Some(state) if state.mode() == ControllerMode::MixedInput
+        ));
     }
 }

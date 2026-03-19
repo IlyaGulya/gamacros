@@ -101,4 +101,82 @@ mod tests {
         ));
         assert!(step.transition.effects.is_empty());
     }
+
+    #[test]
+    fn wake_timer_reschedules_after_due_repeat_setup() {
+        use ahash::{AHashMap, AHashSet};
+        use gamacros_bit_mask::Bitmask;
+        use gamacros_control::{Key, KeyCombo};
+        use gamacros_gamepad::{Button, ControllerInfo};
+        use gamacros_workspace::{AppRules, ButtonAction, ButtonRule, Profile};
+        use std::sync::Arc;
+
+        fn profile_with_repeating_button_rule() -> Profile {
+            let mut buttons = AHashMap::new();
+            buttons.insert(
+                Bitmask::new(&[Button::A]),
+                ButtonRule {
+                    action: ButtonAction::Keystroke(Arc::new(KeyCombo::from_key(
+                        Key::Unicode('a'),
+                    ))),
+                    vibrate: None,
+                    repeat_delay_ms: Some(1),
+                    repeat_interval_ms: Some(1),
+                },
+            );
+
+            let mut rules = AHashMap::new();
+            rules.insert(
+                "common".into(),
+                AppRules {
+                    buttons,
+                    ..AppRules::default()
+                },
+            );
+
+            Profile {
+                controllers: AHashMap::new(),
+                blacklist: AHashSet::new(),
+                rules,
+                shell: None,
+            }
+        }
+
+        fn controller_info(id: u32) -> ControllerInfo {
+            ControllerInfo {
+                id,
+                name: "Test Controller".into(),
+                supports_rumble: false,
+                vendor_id: 1,
+                product_id: 1,
+            }
+        }
+
+        let mut step = DomainStep::continue_();
+        let mut gamacros = Gamacros::new();
+        gamacros.set_workspace(profile_with_repeating_button_rule());
+        gamacros.add_controller(controller_info(1));
+        let _ = gamacros.on_button_effects(
+            1,
+            Button::A,
+            crate::app::ButtonPhase::Pressed,
+        );
+
+        let runtime_state = RuntimeState::new(RuntimeMode::Active);
+        let mut wake_state = WakeState::new(std::time::Instant::now());
+        wake_state.next_tick_due = Some(std::time::Instant::now());
+
+        reduce_timer_event(
+            TimerEvent::Wake,
+            &mut step,
+            &mut gamacros,
+            &runtime_state,
+            &wake_state,
+        );
+
+        assert!(matches!(
+            step.transition.wake.as_slice(),
+            [.., WakeTransition::Reschedule]
+        ));
+    }
 }
