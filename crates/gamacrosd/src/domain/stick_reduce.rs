@@ -5,7 +5,7 @@ use crate::domain::reduce::DomainStep;
 use crate::domain::stick_state::StickState;
 use crate::domain::{
     resolve_stick_state, stick_transition, ControllerMode, ControllerRuntimeState,
-    RuntimeState, StickActivity, WakeTransition,
+    RuntimeState, StickActivity, StickTransition, WakeTransition,
 };
 use crate::print_debug;
 
@@ -18,6 +18,12 @@ fn apply_stick_transition_intents(
     let Some((prev, next)) = stick_transition(previous, next) else {
         return;
     };
+
+    step.transition.stick_updates.push(StickTransition {
+        controller_id,
+        previous: prev,
+        next,
+    });
 
     match (prev.map(|state| state.activity), next.activity) {
         (
@@ -213,5 +219,31 @@ mod tests {
         let state = resolve_controller_state(&gamacros, 1);
 
         assert_eq!(state.mode(), ControllerMode::ButtonsActive);
+    }
+
+    #[test]
+    fn push_controller_state_update_records_stick_transition() {
+        let mut gamacros = Gamacros::new();
+        gamacros.add_controller(controller_info(1));
+        let mut runtime_state =
+            RuntimeState::new(crate::domain::RuntimeMode::Active);
+        let idle_state = resolve_controller_state(&gamacros, 1);
+        runtime_state.set_controller_state(1, idle_state);
+
+        gamacros.on_axis_motion(1, Axis::LeftX, 0.7);
+        let next_state = resolve_controller_state(&gamacros, 1);
+        let mut step = DomainStep::continue_();
+
+        push_controller_state_update(&mut step, &runtime_state, 1, next_state);
+
+        assert_eq!(step.transition.stick_updates.len(), 1);
+        assert!(matches!(
+            step.transition.stick_updates[0].previous,
+            Some(prev) if prev.activity == StickActivity::Neutral
+        ));
+        assert!(matches!(
+            step.transition.stick_updates[0].next.activity,
+            StickActivity::Active
+        ));
     }
 }

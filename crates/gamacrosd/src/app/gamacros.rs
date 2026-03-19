@@ -139,10 +139,6 @@ impl Gamacros {
         self.controllers.remove(&id);
     }
 
-    pub fn supports_rumble(&self, id: ControllerId) -> bool {
-        self.controllers.get(&id).map(|s| s.rumble).unwrap_or(false)
-    }
-
     pub fn controller_has_pressed_buttons(&self, id: ControllerId) -> bool {
         self.controllers
             .get(&id)

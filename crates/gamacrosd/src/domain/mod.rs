@@ -22,7 +22,7 @@ pub use stick_state::{resolve_stick_state, stick_transition, StickActivity};
 pub use state::{ControllerMode, ControllerRuntimeState, RuntimeMode, RuntimeState};
 pub use timer_reduce::reduce_timer_event;
 pub use transition::{
-    ControllerTransition, ModeTransition, ShellTransition, Transition,
-    WakeTransition,
+    ControllerTransition, ModeTransition, ShellTransition, StickTransition,
+    Transition, WakeTransition,
 };
 pub use wake::{apply_wake_intents, overdue_wake_event, reschedule_wake, WakeState};
