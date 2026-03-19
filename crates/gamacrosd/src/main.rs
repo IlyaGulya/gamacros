@@ -19,7 +19,7 @@ use lunchctl::{LaunchAgent, LaunchControllable};
 use crate::activity::{Monitor, NotificationListener};
 
 use gamacros_control::Performer;
-use gamacros_gamepad::ControllerManager;
+use gamacros_gamepad::{ControllerEvent, ControllerManager};
 use gamacros_workspace::Workspace;
 
 use crate::api::{ApiTransport, Command as ApiCommand, UnixSocket};
@@ -401,6 +401,19 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
             } else {
                 RuntimeMode::AwaitingProfile
             });
+
+            for info in manager.controllers() {
+                if let DomainControl::Break = dispatch_domain_event(
+                    DomainEvent::Controller(ControllerEvent::Connected(info)),
+                    &mut gamacros,
+                    &mut runtime_state,
+                    &mut action_runner,
+                    &manager,
+                    &mut wake_state,
+                ) {
+                    break;
+                }
+            }
 
             print_info!(
                 "gamacrosd started. Listening for controller and activity events."
