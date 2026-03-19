@@ -578,4 +578,52 @@ mod tests {
             Some(state) if state.mode() == ControllerMode::MixedInput
         ));
     }
+
+    #[test]
+    fn reduce_event_axis_motion_records_explicit_stick_transition() {
+        let mut gamacros = Gamacros::new();
+        gamacros.set_workspace(profile_with_common_rules());
+        gamacros.add_controller(controller_info(13));
+        let manager = ControllerManager::new().expect("manager init");
+        let mut runtime_state = RuntimeState::new(RuntimeMode::Active);
+        runtime_state.set_controller_state(
+            13,
+            crate::domain::ControllerRuntimeState::new(
+                ControllerMode::ConnectedIdle,
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    13,
+                    gamacros_workspace::StickSide::Left,
+                ),
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    13,
+                    gamacros_workspace::StickSide::Right,
+                ),
+            ),
+        );
+        let wake_state = WakeState::new(std::time::Instant::now());
+
+        let step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::AxisMotion {
+                id: 13,
+                axis: gamacros_gamepad::Axis::LeftX,
+                value: 0.9,
+            }),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+
+        assert_eq!(step.transition.stick_updates.len(), 1);
+        assert!(matches!(
+            step.transition.stick_updates[0].previous,
+            Some(prev) if prev.activity == crate::domain::StickActivity::Neutral
+        ));
+        assert!(matches!(
+            step.transition.stick_updates[0].next.activity,
+            crate::domain::StickActivity::Active
+        ));
+    }
 }
