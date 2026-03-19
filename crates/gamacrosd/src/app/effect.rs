@@ -6,7 +6,9 @@ use gamacros_workspace::{Macros, MouseButton, MouseClickType, RawModifierKey};
 
 #[derive(Debug, Clone)]
 pub enum Effect {
+    #[allow(dead_code)]
     KeyPress(KeyCombo),
+    #[allow(dead_code)]
     KeyRelease(KeyCombo),
     KeyTap(KeyCombo),
     Macros(Arc<Macros>),

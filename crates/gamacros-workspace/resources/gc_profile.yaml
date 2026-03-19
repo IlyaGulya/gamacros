@@ -46,7 +46,7 @@ rules:
     buttons:
       b:
         vibrate: 100
-        keystroke: cmd
+        hold: cmd
       a:
         keystroke: cmd+shift+i+q
       r1:

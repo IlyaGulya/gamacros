@@ -115,8 +115,10 @@ impl RawModifierKey {
 /// A action for a gamepad button.
 #[derive(Debug, Clone)]
 pub enum ButtonAction {
-    /// Hold: press on button down, release on button up. Default for `keystroke:`.
+    /// Press+release on button press, then optionally repeat while held.
     Keystroke(Arc<KeyCombo>),
+    /// Hold: press on button down, release on button up.
+    HoldKeystroke(Arc<KeyCombo>),
     /// Tap: press+release immediately on button press. No key repeat. Use `tap:`.
     TapKeystroke(Arc<KeyCombo>),
     Macros(Arc<Macros>),

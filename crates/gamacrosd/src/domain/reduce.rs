@@ -174,6 +174,37 @@ mod tests {
         }
     }
 
+    fn profile_with_hold_button_rule() -> Profile {
+        let mut buttons = AHashMap::new();
+        buttons.insert(
+            Bitmask::new(&[Button::A]),
+            ButtonRule {
+                action: ButtonAction::HoldKeystroke(Arc::new(KeyCombo::from_key(
+                    Key::Unicode('a'),
+                ))),
+                vibrate: None,
+                repeat_delay_ms: None,
+                repeat_interval_ms: None,
+            },
+        );
+
+        let mut rules = AHashMap::new();
+        rules.insert(
+            "common".into(),
+            AppRules {
+                buttons,
+                ..AppRules::default()
+            },
+        );
+
+        Profile {
+            controllers: AHashMap::new(),
+            blacklist: AHashSet::new(),
+            rules,
+            shell: Some("/bin/zsh".into()),
+        }
+    }
+
     #[test]
     fn reduce_event_profile_changed_emits_runtime_transition() {
         let mut gamacros = Gamacros::new();
@@ -489,6 +520,62 @@ mod tests {
         assert!(matches!(
             release_step.transition.controller_updates[0].next_state,
             Some(state) if state.mode() == ControllerMode::ConnectedIdle
+        ));
+    }
+
+    #[test]
+    fn reduce_event_hold_button_emits_press_then_release_effects() {
+        let mut gamacros = Gamacros::new();
+        gamacros.set_workspace(profile_with_hold_button_rule());
+        gamacros.add_controller(controller_info(21));
+        let manager = ControllerManager::new().expect("manager init");
+        let mut runtime_state = RuntimeState::new(RuntimeMode::Active);
+        runtime_state.set_controller_state(
+            21,
+            crate::domain::ControllerRuntimeState::new(
+                ControllerMode::ConnectedIdle,
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    21,
+                    gamacros_workspace::StickSide::Left,
+                ),
+                crate::domain::resolve_stick_state(
+                    &gamacros,
+                    21,
+                    gamacros_workspace::StickSide::Right,
+                ),
+            ),
+        );
+        let wake_state = WakeState::new(std::time::Instant::now());
+
+        let press_step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::ButtonPressed {
+                id: 21,
+                button: Button::A,
+            }),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+        assert!(matches!(
+            press_step.transition.effects.as_slice(),
+            [crate::app::Effect::KeyPress(_)]
+        ));
+
+        let release_step = reduce_event(
+            DomainEvent::Controller(ControllerEvent::ButtonReleased {
+                id: 21,
+                button: Button::A,
+            }),
+            &mut gamacros,
+            &manager,
+            &runtime_state,
+            &wake_state,
+        );
+        assert!(matches!(
+            release_step.transition.effects.as_slice(),
+            [crate::app::Effect::KeyRelease(_)]
         ));
     }
 

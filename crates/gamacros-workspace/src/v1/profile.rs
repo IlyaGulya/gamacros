@@ -34,6 +34,8 @@ pub(crate) struct ProfileV1ButtonRule {
     #[serde(default)]
     pub keystroke: Option<String>,
     #[serde(default)]
+    pub hold: Option<String>,
+    #[serde(default)]
     pub tap: Option<String>,
     #[serde(default)]
     pub macros: Option<Vec<String>>,

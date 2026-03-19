@@ -97,9 +97,9 @@ rules:
     buttons:
       l1:
         vibrate: 100
-        keystroke: rcmd # Local voice recognition hold-to-talk
-      a:
-        keystroke: enter
+        hold: rcmd # Local voice recognition hold-to-talk
+        a:
+          keystroke: enter
 
   $ide | $browser:
     buttons:
@@ -154,7 +154,6 @@ To send key events on macOS, the process must be allowed under System Settings â
 
 ## Roadmap
 
-- Button hold semantics.
 - Gyro/accelerometer support.
 - UI for editing profiles.
 

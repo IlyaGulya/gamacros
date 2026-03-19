@@ -82,7 +82,12 @@
         "keystroke": {
           "type": "string",
           "minLength": 1,
-          "description": "Single key combo (e.g., 'cmd+dot', 'enter')."
+          "description": "Tap on press, then optionally repeat while held (e.g., 'cmd+dot', 'enter')."
+        },
+        "hold": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Hold key combo: press on button down, release on button up."
         },
         "macros": {
           "type": "array",
@@ -99,15 +104,19 @@
       "oneOf": [
         {
           "required": ["keystroke"],
-          "not": { "anyOf": [ { "required": ["macros"] }, { "required": ["shell"] } ] }
+          "not": { "anyOf": [ { "required": ["hold"] }, { "required": ["macros"] }, { "required": ["shell"] } ] }
+        },
+        {
+          "required": ["hold"],
+          "not": { "anyOf": [ { "required": ["keystroke"] }, { "required": ["macros"] }, { "required": ["shell"] } ] }
         },
         {
           "required": ["macros"],
-          "not": { "anyOf": [ { "required": ["keystroke"] }, { "required": ["shell"] } ] }
+          "not": { "anyOf": [ { "required": ["keystroke"] }, { "required": ["hold"] }, { "required": ["shell"] } ] }
         },
         {
           "required": ["shell"],
-          "not": { "anyOf": [ { "required": ["keystroke"] }, { "required": ["macros"] } ] }
+          "not": { "anyOf": [ { "required": ["keystroke"] }, { "required": ["hold"] }, { "required": ["macros"] } ] }
         }
       ]
     },
@@ -214,4 +223,3 @@
     }
   }
 }
-

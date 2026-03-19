@@ -548,6 +548,10 @@ impl Gamacros {
                 let mut effects = Vec::new();
                 let repeat = match rule.action.clone() {
                     ButtonAction::Keystroke(_) => ButtonRepeatDirective::Stop,
+                    ButtonAction::HoldKeystroke(k) => {
+                        effects.push(Effect::KeyRelease((*k).clone()));
+                        ButtonRepeatDirective::None
+                    }
                     ButtonAction::HoldClick(btn) => {
                         effects.push(Effect::MouseRelease { button: btn });
                         ButtonRepeatDirective::None
@@ -614,6 +618,10 @@ impl Gamacros {
                                     .repeat_interval_ms
                                     .unwrap_or(DEFAULT_REPEAT_INTERVAL_MS),
                             }
+                        }
+                        ButtonAction::HoldKeystroke(k) => {
+                            effects.push(Effect::KeyPress((*k).clone()));
+                            ButtonRepeatDirective::None
                         }
                         ButtonAction::TapKeystroke(k) => {
                             effects.push(Effect::KeyTap((*k).clone()));
