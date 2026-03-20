@@ -509,6 +509,9 @@ impl StickProcessor {
         let (x0, y0) = axes_for_side(axes, stick_side);
         let (raw_x, raw_y) =
             invert_xy(x0, y0, params.invert_x, params.invert_y);
+        // Let the filter track raw input freely — never reset it.
+        // This allows smooth zero-crossing during direction reversals
+        // without getting trapped by the deadzone threshold.
         side.mouse_filtered.0 += alpha * (raw_x - side.mouse_filtered.0);
         side.mouse_filtered.1 += alpha * (raw_y - side.mouse_filtered.1);
         let (x, y) = side.mouse_filtered;
@@ -542,9 +545,13 @@ impl StickProcessor {
                     accum.0 -= dx as f32;
                     accum.1 -= dy as f32;
                 }
+                // Clamp remainder to ±1px so direction changes respond
+                // instantly when cursor is at a screen edge.
+                accum.0 = accum.0.clamp(-1.0, 1.0);
+                accum.1 = accum.1.clamp(-1.0, 1.0);
             }
         } else {
-            side.mouse_filtered = (0.0, 0.0);
+            // Only zero the movement accumulator, NOT the filter.
             side.mouse_accum = (0.0, 0.0);
         }
     }
