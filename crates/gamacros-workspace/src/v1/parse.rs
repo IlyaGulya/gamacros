@@ -310,13 +310,14 @@ fn parse_stick_mode(raw: ProfileV1Stick) -> Result<StickMode, Error> {
         "mouse_move" => {
             let params = MouseParams {
                 deadzone,
+                outer_deadzone: raw.outer_deadzone.unwrap_or(0.05),
                 max_speed_px_s: raw.max_speed_px_s.unwrap_or(1600.0),
-                gamma: raw.gamma.unwrap_or(1.5),
+                gamma: raw.gamma.unwrap_or(2.2),
                 invert_x: raw.invert_x.unwrap_or(false),
                 invert_y: raw.invert_y.unwrap_or(false),
                 runtime: MouseRuntimeParams {
                     tick_ms: raw.tick_ms.unwrap_or(4),
-                    smoothing_window_ms: raw.smoothing_window_ms.unwrap_or(25),
+                    smoothing_window_ms: raw.smoothing_window_ms.unwrap_or(12),
                 },
             };
             StickMode::MouseMove(params)

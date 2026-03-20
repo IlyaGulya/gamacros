@@ -7,11 +7,13 @@ use crate::print_debug;
 
 use super::compiled::CompiledStickRules;
 use super::repeat::{
-    Direction, MousePerfFrame, RepeatKind, RepeatTaskId, RepeatReg, StickProcessor,
+    Direction, MousePerfFrame, RepeatKind, RepeatTaskId, RepeatReg, SideRepeatState,
+    StickProcessor,
 };
 use super::StepperMode;
 use super::util::{
     axis_index, axes_for_side, invert_xy, magnitude2d, normalize_after_deadzone,
+    normalize_with_outer_deadzone,
 };
 
 #[inline]
@@ -471,108 +473,80 @@ impl StickProcessor {
         for (_cid, axes) in axes_list.iter().cloned() {
             if let Some(StickMode::MouseMove(params)) = bindings.left() {
                 perf.mode_active = true;
-                let alpha = Self::mouse_smoothing_alpha(
-                    dt_s,
-                    params.runtime.smoothing_window_ms,
-                );
-                let (x0, y0) = axes_for_side(axes, &StickSide::Left);
                 let sidx = super::util::side_index(&StickSide::Left);
                 let side =
                     &mut self.controllers.entry(_cid).or_default().sides[sidx];
-                let (raw_x, raw_y) =
-                    invert_xy(x0, y0, params.invert_x, params.invert_y);
-                side.mouse_filtered.0 += alpha * (raw_x - side.mouse_filtered.0);
-                side.mouse_filtered.1 += alpha * (raw_y - side.mouse_filtered.1);
-                let (x, y) = side.mouse_filtered;
-                let mag_raw = magnitude2d(x, y);
-                if mag_raw >= params.deadzone {
-                    let base = normalize_after_deadzone(mag_raw, params.deadzone);
-                    let mag = Self::fast_gamma(base, params.gamma);
-                    if mag > 0.0 {
-                        let dir_x = x / mag_raw;
-                        let dir_y = y / mag_raw;
-                        let speed_px_s = params.max_speed_px_s * mag;
-                        let accum = &mut side.mouse_accum;
-                        accum.0 += speed_px_s * dir_x * dt_s;
-                        accum.1 += speed_px_s * dir_y * dt_s;
-                        let dx = accum.0.trunc() as i32;
-                        let dy = accum.1.trunc() as i32;
-                        if dx != 0 || dy != 0 {
-                            print_debug!(
-                                "stick mouse: controller={_cid} side=Left raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag={mag:.3} speed_px_s={speed_px_s:.1} move=({dx},{dy}) accum=({:.3},{:.3})"
-                                ,accum.0,accum.1
-                            );
-                            let chunk_perf =
-                                Self::emit_mouse_move_chunked(sink, dx, dy);
-                            perf.move_events += chunk_perf.move_events;
-                            perf.distance_total += chunk_perf.distance_total;
-                            perf.chunk_max =
-                                perf.chunk_max.max(chunk_perf.chunk_max);
-                            perf.chunk_over_8 += chunk_perf.chunk_over_8;
-                            perf.chunk_over_16 += chunk_perf.chunk_over_16;
-                            perf.chunk_over_32 += chunk_perf.chunk_over_32;
-                            accum.0 -= dx as f32;
-                            accum.1 -= dy as f32;
-                        }
-                    }
-                } else {
-                    side.mouse_filtered = (0.0, 0.0);
-                    side.mouse_accum = (0.0, 0.0);
-                }
+                Self::tick_mouse_side(
+                    dt_s, params, axes, &StickSide::Left, side, sink, &mut perf,
+                );
             }
             if let Some(StickMode::MouseMove(params)) = bindings.right() {
                 perf.mode_active = true;
-                let alpha = Self::mouse_smoothing_alpha(
-                    dt_s,
-                    params.runtime.smoothing_window_ms,
-                );
-                let (x0, y0) = axes_for_side(axes, &StickSide::Right);
                 let sidx = super::util::side_index(&StickSide::Right);
                 let side =
                     &mut self.controllers.entry(_cid).or_default().sides[sidx];
-                let (raw_x, raw_y) =
-                    invert_xy(x0, y0, params.invert_x, params.invert_y);
-                side.mouse_filtered.0 += alpha * (raw_x - side.mouse_filtered.0);
-                side.mouse_filtered.1 += alpha * (raw_y - side.mouse_filtered.1);
-                let (x, y) = side.mouse_filtered;
-                let mag_raw = magnitude2d(x, y);
-                if mag_raw >= params.deadzone {
-                    let base = normalize_after_deadzone(mag_raw, params.deadzone);
-                    let mag = Self::fast_gamma(base, params.gamma);
-                    if mag > 0.0 {
-                        let dir_x = x / mag_raw;
-                        let dir_y = y / mag_raw;
-                        let speed_px_s = params.max_speed_px_s * mag;
-                        let accum = &mut side.mouse_accum;
-                        accum.0 += speed_px_s * dir_x * dt_s;
-                        accum.1 += speed_px_s * dir_y * dt_s;
-                        let dx = accum.0.trunc() as i32;
-                        let dy = accum.1.trunc() as i32;
-                        if dx != 0 || dy != 0 {
-                            print_debug!(
-                                "stick mouse: controller={_cid} side=Right raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag={mag:.3} speed_px_s={speed_px_s:.1} move=({dx},{dy}) accum=({:.3},{:.3})"
-                                ,accum.0,accum.1
-                            );
-                            let chunk_perf =
-                                Self::emit_mouse_move_chunked(sink, dx, dy);
-                            perf.move_events += chunk_perf.move_events;
-                            perf.distance_total += chunk_perf.distance_total;
-                            perf.chunk_max =
-                                perf.chunk_max.max(chunk_perf.chunk_max);
-                            perf.chunk_over_8 += chunk_perf.chunk_over_8;
-                            perf.chunk_over_16 += chunk_perf.chunk_over_16;
-                            perf.chunk_over_32 += chunk_perf.chunk_over_32;
-                            accum.0 -= dx as f32;
-                            accum.1 -= dy as f32;
-                        }
-                    }
-                } else {
-                    side.mouse_filtered = (0.0, 0.0);
-                    side.mouse_accum = (0.0, 0.0);
-                }
+                Self::tick_mouse_side(
+                    dt_s, params, axes, &StickSide::Right, side, sink, &mut perf,
+                );
             }
         }
         perf
+    }
+
+    fn tick_mouse_side(
+        dt_s: f32,
+        params: &gamacros_workspace::MouseParams,
+        axes: [f32; 6],
+        stick_side: &StickSide,
+        side: &mut SideRepeatState,
+        sink: &mut impl FnMut(Effect),
+        perf: &mut MousePerfFrame,
+    ) {
+        let alpha = Self::mouse_smoothing_alpha(
+            dt_s,
+            params.runtime.smoothing_window_ms,
+        );
+        let (x0, y0) = axes_for_side(axes, stick_side);
+        let (raw_x, raw_y) =
+            invert_xy(x0, y0, params.invert_x, params.invert_y);
+        side.mouse_filtered.0 += alpha * (raw_x - side.mouse_filtered.0);
+        side.mouse_filtered.1 += alpha * (raw_y - side.mouse_filtered.1);
+        let (x, y) = side.mouse_filtered;
+        let mag_raw = magnitude2d(x, y);
+        if mag_raw >= params.deadzone {
+            let base = normalize_with_outer_deadzone(
+                mag_raw,
+                params.deadzone,
+                params.outer_deadzone,
+            );
+            let mag = Self::three_zone_curve(base, params.gamma);
+            if mag > 0.0 {
+                let dir_x = x / mag_raw;
+                let dir_y = y / mag_raw;
+                let speed_px_s = params.max_speed_px_s * mag;
+                let accum = &mut side.mouse_accum;
+                accum.0 += speed_px_s * dir_x * dt_s;
+                accum.1 += speed_px_s * dir_y * dt_s;
+                let dx = accum.0.trunc() as i32;
+                let dy = accum.1.trunc() as i32;
+                if dx != 0 || dy != 0 {
+                    let chunk_perf =
+                        Self::emit_mouse_move_chunked(sink, dx, dy);
+                    perf.move_events += chunk_perf.move_events;
+                    perf.distance_total += chunk_perf.distance_total;
+                    perf.chunk_max =
+                        perf.chunk_max.max(chunk_perf.chunk_max);
+                    perf.chunk_over_8 += chunk_perf.chunk_over_8;
+                    perf.chunk_over_16 += chunk_perf.chunk_over_16;
+                    perf.chunk_over_32 += chunk_perf.chunk_over_32;
+                    accum.0 -= dx as f32;
+                    accum.1 -= dy as f32;
+                }
+            }
+        } else {
+            side.mouse_filtered = (0.0, 0.0);
+            side.mouse_accum = (0.0, 0.0);
+        }
     }
 
     #[inline]
@@ -596,6 +570,42 @@ impl StickProcessor {
             base * base * base
         } else {
             base.powf(g)
+        }
+    }
+
+    /// Three-zone response curve for mouse movement.
+    ///
+    /// - Zone 1 (0.0..0.4): reduced sensitivity (×0.4) for precision
+    /// - Zone 2 (0.4..0.8): linear 1:1 for predictable movement
+    /// - Zone 3 (0.8..1.0): accelerated (power curve with `gamma`) for fast traversal
+    ///
+    /// Output is continuous and spans [0.0, 1.0].
+    #[inline]
+    fn three_zone_curve(base: f32, gamma: f32) -> f32 {
+        // Zone boundaries and output values at boundaries:
+        // zone1: input [0, 0.4] → output [0, 0.16]       (slope 0.4)
+        // zone2: input [0.4, 0.8] → output [0.16, 0.56]  (slope 1.0)
+        // zone3: input [0.8, 1.0] → output [0.56, 1.0]   (accelerated)
+        const Z1_END: f32 = 0.4;
+        const Z2_END: f32 = 0.8;
+        const SLOW_FACTOR: f32 = 0.4;
+        // Output at zone boundaries
+        const OUT_Z1: f32 = Z1_END * SLOW_FACTOR; // 0.16
+        const OUT_Z2: f32 = OUT_Z1 + (Z2_END - Z1_END); // 0.56
+
+        if base <= 0.0 {
+            0.0
+        } else if base <= Z1_END {
+            // Zone 1: reduced sensitivity
+            base * SLOW_FACTOR
+        } else if base <= Z2_END {
+            // Zone 2: linear
+            OUT_Z1 + (base - Z1_END)
+        } else {
+            // Zone 3: accelerated — remap [0.8, 1.0] to [0, 1], apply gamma, remap to [0.56, 1.0]
+            let t = ((base - Z2_END) / (1.0 - Z2_END)).min(1.0);
+            let curved = Self::fast_gamma(t, gamma);
+            OUT_Z2 + curved * (1.0 - OUT_Z2)
         }
     }
 

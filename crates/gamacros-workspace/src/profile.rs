@@ -191,6 +191,7 @@ pub struct StepperParams {
 #[derive(Debug, Clone)]
 pub struct MouseParams {
     pub deadzone: f32,
+    pub outer_deadzone: f32,
     pub max_speed_px_s: f32,
     pub gamma: f32,
     pub invert_x: bool,

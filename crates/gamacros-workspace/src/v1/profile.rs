@@ -88,6 +88,8 @@ pub(crate) struct ProfileV1Stick {
     pub max_interval_ms: Option<u64>,
     // mouse
     #[serde(default)]
+    pub outer_deadzone: Option<f32>,
+    #[serde(default)]
     pub max_speed_px_s: Option<f32>,
     #[serde(default)]
     pub gamma: Option<f32>,

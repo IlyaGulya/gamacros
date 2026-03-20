@@ -60,3 +60,17 @@ pub(crate) fn normalize_after_deadzone(mag: f32, deadzone: f32) -> f32 {
         ((mag - deadzone) / (1.0 - deadzone)).clamp(0.0, 1.0)
     }
 }
+
+#[inline]
+pub(crate) fn normalize_with_outer_deadzone(
+    mag: f32,
+    inner: f32,
+    outer: f32,
+) -> f32 {
+    if mag <= inner {
+        0.0
+    } else {
+        let max = 1.0 - outer;
+        ((mag - inner) / (max - inner)).clamp(0.0, 1.0)
+    }
+}
