@@ -4,3 +4,7 @@
 testdata/profile.yaml
 /gc_profile.yaml
 .supercode
+
+# Dolt database files (added by bd init)
+.dolt/
+*.db
