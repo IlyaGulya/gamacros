@@ -28,6 +28,36 @@ pub(crate) struct StickProcessor {
     schedule: BinaryHeap<SchedEntry>,
     seq_counter: u64,
     pub(super) last_tick_at: Option<Instant>,
+    pub(super) perf: TickPerfStats,
+}
+
+#[derive(Default)]
+pub(super) struct TickPerfStats {
+    pub(super) samples: u64,
+    pub(super) dt_us_total: u64,
+    pub(super) dt_us_max: u64,
+    pub(super) tick_elapsed_us_total: u64,
+    pub(super) tick_elapsed_us_max: u64,
+    pub(super) mouse_mode_ticks: u64,
+    pub(super) mouse_move_events: u64,
+    pub(super) mouse_zero_move_ticks: u64,
+    pub(super) mouse_distance_total: f64,
+    pub(super) mouse_chunk_max: u64,
+    pub(super) mouse_chunk_over_8: u64,
+    pub(super) mouse_chunk_over_16: u64,
+    pub(super) mouse_chunk_over_32: u64,
+    pub(super) last_report_at: Option<Instant>,
+}
+
+#[derive(Default)]
+pub(super) struct MousePerfFrame {
+    pub(super) mode_active: bool,
+    pub(super) move_events: u64,
+    pub(super) distance_total: f64,
+    pub(super) chunk_max: u64,
+    pub(super) chunk_over_8: u64,
+    pub(super) chunk_over_16: u64,
+    pub(super) chunk_over_32: u64,
 }
 
 #[derive(Default)]

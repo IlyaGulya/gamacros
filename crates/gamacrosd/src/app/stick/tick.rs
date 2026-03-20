@@ -6,7 +6,9 @@ use crate::app::Effect;
 use crate::print_debug;
 
 use super::compiled::CompiledStickRules;
-use super::repeat::{Direction, RepeatKind, RepeatTaskId, RepeatReg, StickProcessor};
+use super::repeat::{
+    Direction, MousePerfFrame, RepeatKind, RepeatTaskId, RepeatReg, StickProcessor,
+};
 use super::StepperMode;
 use super::util::{
     axis_index, axes_for_side, invert_xy, magnitude2d, normalize_after_deadzone,
@@ -27,6 +29,70 @@ fn trigger_scroll_boost(
 }
 
 impl StickProcessor {
+    fn emit_mouse_move_chunked(
+        sink: &mut impl FnMut(Effect),
+        dx: i32,
+        dy: i32,
+    ) -> MousePerfFrame {
+        const MAX_CHUNK_AXIS: i32 = 16;
+
+        let mut perf = MousePerfFrame::default();
+        let max_axis = dx.abs().max(dy.abs());
+        if max_axis <= MAX_CHUNK_AXIS {
+            sink(Effect::MouseMove { dx, dy });
+            perf.move_events = 1;
+            let chunk = ((dx * dx + dy * dy) as f64).sqrt();
+            perf.distance_total = chunk;
+            let chunk = chunk.round() as u64;
+            perf.chunk_max = chunk;
+            if chunk > 8 {
+                perf.chunk_over_8 = 1;
+            }
+            if chunk > 16 {
+                perf.chunk_over_16 = 1;
+            }
+            if chunk > 32 {
+                perf.chunk_over_32 = 1;
+            }
+            return perf;
+        }
+        let steps = ((max_axis + MAX_CHUNK_AXIS - 1) / MAX_CHUNK_AXIS).max(1);
+        let mut prev_x = 0;
+        let mut prev_y = 0;
+
+        for step in 1..=steps {
+            let target_x = (dx * step) / steps;
+            let target_y = (dy * step) / steps;
+            let chunk_x = target_x - prev_x;
+            let chunk_y = target_y - prev_y;
+            prev_x = target_x;
+            prev_y = target_y;
+            if chunk_x == 0 && chunk_y == 0 {
+                continue;
+            }
+            sink(Effect::MouseMove {
+                dx: chunk_x,
+                dy: chunk_y,
+            });
+            perf.move_events += 1;
+            let chunk = ((chunk_x * chunk_x + chunk_y * chunk_y) as f64).sqrt();
+            perf.distance_total += chunk;
+            let chunk = chunk.round() as u64;
+            perf.chunk_max = perf.chunk_max.max(chunk);
+            if chunk > 8 {
+                perf.chunk_over_8 += 1;
+            }
+            if chunk > 16 {
+                perf.chunk_over_16 += 1;
+            }
+            if chunk > 32 {
+                perf.chunk_over_32 += 1;
+            }
+        }
+
+        perf
+    }
+
     pub fn on_tick_with<F: FnMut(Effect)>(
         &mut self,
         bindings: Option<&CompiledStickRules>,
@@ -42,7 +108,13 @@ impl StickProcessor {
 
         let now = std::time::Instant::now();
         let started_at = now;
+        let previous_tick_at = self.last_tick_at;
         let dt_s = self.tick_dt_s(now);
+        let dt_us = previous_tick_at
+            .map(|last_tick_at| {
+                now.saturating_duration_since(last_tick_at).as_micros() as u64
+            })
+            .unwrap_or((dt_s * 1_000_000.0) as u64);
         self.generation = self.generation.wrapping_add(1);
         print_debug!(
             "stick processor tick: generation={} controllers={} has_repeats={} dt_s={dt_s:.4} left_mode={:?} right_mode={:?}",
@@ -80,10 +152,11 @@ impl StickProcessor {
                 StepperMode::Brightness,
             );
         }
+        let mut mouse_perf = MousePerfFrame::default();
         if matches!(bindings.left(), Some(StickMode::MouseMove(_)))
             || matches!(bindings.right(), Some(StickMode::MouseMove(_)))
         {
-            self.tick_mouse(dt_s, &mut sink, axes_list, bindings);
+            mouse_perf = self.tick_mouse(dt_s, &mut sink, axes_list, bindings);
         }
         if matches!(bindings.left(), Some(StickMode::Scroll(_)))
             || matches!(bindings.right(), Some(StickMode::Scroll(_)))
@@ -93,16 +166,65 @@ impl StickProcessor {
 
         // Repeat draining is now event-driven, cleanup still needs to run per generation
         self.repeater_cleanup_inactive();
+        let tick_elapsed_us = started_at.elapsed().as_micros() as u64;
+        self.perf.samples += 1;
+        self.perf.dt_us_total += dt_us;
+        self.perf.dt_us_max = self.perf.dt_us_max.max(dt_us);
+        self.perf.tick_elapsed_us_total += tick_elapsed_us;
+        self.perf.tick_elapsed_us_max =
+            self.perf.tick_elapsed_us_max.max(tick_elapsed_us);
+        if mouse_perf.mode_active {
+            self.perf.mouse_mode_ticks += 1;
+            self.perf.mouse_move_events += mouse_perf.move_events;
+            self.perf.mouse_distance_total += mouse_perf.distance_total;
+            self.perf.mouse_chunk_max =
+                self.perf.mouse_chunk_max.max(mouse_perf.chunk_max);
+            self.perf.mouse_chunk_over_8 += mouse_perf.chunk_over_8;
+            self.perf.mouse_chunk_over_16 += mouse_perf.chunk_over_16;
+            self.perf.mouse_chunk_over_32 += mouse_perf.chunk_over_32;
+            if mouse_perf.move_events == 0 {
+                self.perf.mouse_zero_move_ticks += 1;
+            }
+        }
+        let should_report = self.perf.samples >= 120
+            || self.perf.last_report_at.is_some_and(|last| {
+                now.saturating_duration_since(last).as_secs() >= 2
+            });
+        if should_report {
+            let avg_dt_us = self.perf.dt_us_total / self.perf.samples.max(1);
+            let avg_tick_elapsed_us =
+                self.perf.tick_elapsed_us_total / self.perf.samples.max(1);
+            print_debug!(
+                "perf stick: samples={} avg_dt_us={} max_dt_us={} avg_tick_elapsed_us={} max_tick_elapsed_us={} mouse_mode_ticks={} mouse_move_events={} mouse_zero_move_ticks={} mouse_distance_total={:.1} mouse_chunk_max={} mouse_chunk_over_8={} mouse_chunk_over_16={} mouse_chunk_over_32={}",
+                self.perf.samples,
+                avg_dt_us,
+                self.perf.dt_us_max,
+                avg_tick_elapsed_us,
+                self.perf.tick_elapsed_us_max,
+                self.perf.mouse_mode_ticks,
+                self.perf.mouse_move_events,
+                self.perf.mouse_zero_move_ticks,
+                self.perf.mouse_distance_total,
+                self.perf.mouse_chunk_max,
+                self.perf.mouse_chunk_over_8,
+                self.perf.mouse_chunk_over_16,
+                self.perf.mouse_chunk_over_32
+            );
+            self.perf = super::repeat::TickPerfStats {
+                last_report_at: Some(now),
+                ..Default::default()
+            };
+        }
         print_debug!(
             "stick processor tick done: generation={} elapsed_us={}",
             self.generation,
-            started_at.elapsed().as_micros()
+            tick_elapsed_us
         );
     }
 
     fn tick_dt_s(&mut self, now: std::time::Instant) -> f32 {
         const DEFAULT_DT_S: f32 = 0.010;
-        const MIN_DT_S: f32 = 0.005;
+        const MIN_DT_S: f32 = 0.001;
         const MAX_DT_S: f32 = 0.050;
 
         let dt_s = self
@@ -344,9 +466,11 @@ impl StickProcessor {
         sink: &mut impl FnMut(Effect),
         axes_list: &[(ControllerId, [f32; 6])],
         bindings: &CompiledStickRules,
-    ) {
+    ) -> MousePerfFrame {
+        let mut perf = MousePerfFrame::default();
         for (_cid, axes) in axes_list.iter().cloned() {
             if let Some(StickMode::MouseMove(params)) = bindings.left() {
+                perf.mode_active = true;
                 let alpha = Self::mouse_smoothing_alpha(
                     dt_s,
                     params.runtime.smoothing_window_ms,
@@ -378,7 +502,15 @@ impl StickProcessor {
                                 "stick mouse: controller={_cid} side=Left raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag={mag:.3} speed_px_s={speed_px_s:.1} move=({dx},{dy}) accum=({:.3},{:.3})"
                                 ,accum.0,accum.1
                             );
-                            (sink)(Effect::MouseMove { dx, dy });
+                            let chunk_perf =
+                                Self::emit_mouse_move_chunked(sink, dx, dy);
+                            perf.move_events += chunk_perf.move_events;
+                            perf.distance_total += chunk_perf.distance_total;
+                            perf.chunk_max =
+                                perf.chunk_max.max(chunk_perf.chunk_max);
+                            perf.chunk_over_8 += chunk_perf.chunk_over_8;
+                            perf.chunk_over_16 += chunk_perf.chunk_over_16;
+                            perf.chunk_over_32 += chunk_perf.chunk_over_32;
                             accum.0 -= dx as f32;
                             accum.1 -= dy as f32;
                         }
@@ -389,6 +521,7 @@ impl StickProcessor {
                 }
             }
             if let Some(StickMode::MouseMove(params)) = bindings.right() {
+                perf.mode_active = true;
                 let alpha = Self::mouse_smoothing_alpha(
                     dt_s,
                     params.runtime.smoothing_window_ms,
@@ -420,7 +553,15 @@ impl StickProcessor {
                                 "stick mouse: controller={_cid} side=Right raw=({x0:.3},{y0:.3}) filtered=({x:.3},{y:.3}) mag={mag:.3} speed_px_s={speed_px_s:.1} move=({dx},{dy}) accum=({:.3},{:.3})"
                                 ,accum.0,accum.1
                             );
-                            (sink)(Effect::MouseMove { dx, dy });
+                            let chunk_perf =
+                                Self::emit_mouse_move_chunked(sink, dx, dy);
+                            perf.move_events += chunk_perf.move_events;
+                            perf.distance_total += chunk_perf.distance_total;
+                            perf.chunk_max =
+                                perf.chunk_max.max(chunk_perf.chunk_max);
+                            perf.chunk_over_8 += chunk_perf.chunk_over_8;
+                            perf.chunk_over_16 += chunk_perf.chunk_over_16;
+                            perf.chunk_over_32 += chunk_perf.chunk_over_32;
                             accum.0 -= dx as f32;
                             accum.1 -= dy as f32;
                         }
@@ -431,12 +572,13 @@ impl StickProcessor {
                 }
             }
         }
+        perf
     }
 
     #[inline]
     fn mouse_smoothing_alpha(dt_s: f32, smoothing_window_ms: u64) -> f32 {
         let window_s = (smoothing_window_ms as f32 / 1000.0).max(0.001);
-        (dt_s / window_s).clamp(0.18, 0.55)
+        (1.0 - (-dt_s / window_s).exp()).clamp(0.02, 0.55)
     }
 
     #[inline]
