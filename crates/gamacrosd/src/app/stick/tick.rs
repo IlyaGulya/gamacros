@@ -99,6 +99,7 @@ impl StickProcessor {
         &mut self,
         bindings: Option<&CompiledStickRules>,
         axes_list: &[(ControllerId, [f32; 6])],
+        precision: bool,
         mut sink: F,
     ) {
         if axes_list.is_empty() && !self.has_active_repeats() {
@@ -158,7 +159,7 @@ impl StickProcessor {
         if matches!(bindings.left(), Some(StickMode::MouseMove(_)))
             || matches!(bindings.right(), Some(StickMode::MouseMove(_)))
         {
-            mouse_perf = self.tick_mouse(dt_s, &mut sink, axes_list, bindings);
+            mouse_perf = self.tick_mouse(dt_s, &mut sink, axes_list, bindings, precision);
         }
         if matches!(bindings.left(), Some(StickMode::Scroll(_)))
             || matches!(bindings.right(), Some(StickMode::Scroll(_)))
@@ -468,6 +469,7 @@ impl StickProcessor {
         sink: &mut impl FnMut(Effect),
         axes_list: &[(ControllerId, [f32; 6])],
         bindings: &CompiledStickRules,
+        precision: bool,
     ) -> MousePerfFrame {
         let mut perf = MousePerfFrame::default();
         for (_cid, axes) in axes_list.iter().cloned() {
@@ -477,7 +479,8 @@ impl StickProcessor {
                 let side =
                     &mut self.controllers.entry(_cid).or_default().sides[sidx];
                 Self::tick_mouse_side(
-                    dt_s, params, axes, &StickSide::Left, side, sink, &mut perf,
+                    dt_s, params, axes, &StickSide::Left, side, precision, sink,
+                    &mut perf,
                 );
             }
             if let Some(StickMode::MouseMove(params)) = bindings.right() {
@@ -486,7 +489,8 @@ impl StickProcessor {
                 let side =
                     &mut self.controllers.entry(_cid).or_default().sides[sidx];
                 Self::tick_mouse_side(
-                    dt_s, params, axes, &StickSide::Right, side, sink, &mut perf,
+                    dt_s, params, axes, &StickSide::Right, side, precision, sink,
+                    &mut perf,
                 );
             }
         }
@@ -499,6 +503,7 @@ impl StickProcessor {
         axes: [f32; 6],
         stick_side: &StickSide,
         side: &mut SideRepeatState,
+        precision: bool,
         sink: &mut impl FnMut(Effect),
         perf: &mut MousePerfFrame,
     ) {
@@ -526,7 +531,12 @@ impl StickProcessor {
             if mag > 0.0 {
                 let dir_x = x / mag_raw;
                 let dir_y = y / mag_raw;
-                let speed_px_s = params.max_speed_px_s * mag;
+                let speed_mul = if precision {
+                    params.precision_multiplier
+                } else {
+                    1.0
+                };
+                let speed_px_s = params.max_speed_px_s * mag * speed_mul;
                 let accum = &mut side.mouse_accum;
                 accum.0 += speed_px_s * dir_x * dt_s;
                 accum.1 += speed_px_s * dir_y * dt_s;
@@ -672,7 +682,7 @@ impl StickProcessor {
         side_state.scroll_filtered.1 +=
             alpha * (raw_y - side_state.scroll_filtered.1);
         let mut x = side_state.scroll_filtered.0;
-        let y = side_state.scroll_filtered.1;
+        let mut y = side_state.scroll_filtered.1;
         if !params.horizontal {
             x = 0.0;
         }
@@ -680,7 +690,30 @@ impl StickProcessor {
         if mag_raw <= params.deadzone {
             side_state.scroll_filtered = (0.0, 0.0);
             side_state.scroll_accum = (0.0, 0.0);
+            side_state.scroll_axis_lock = super::repeat::ScrollAxisLock::None;
             return;
+        }
+        // Axis lock: once scrolling starts, lock to the dominant axis.
+        if params.horizontal && params.axis_lock {
+            use super::repeat::ScrollAxisLock;
+            match side_state.scroll_axis_lock {
+                ScrollAxisLock::None => {
+                    // Determine dominant axis from filtered values
+                    if y.abs() >= x.abs() {
+                        side_state.scroll_axis_lock = ScrollAxisLock::Vertical;
+                        x = 0.0;
+                    } else {
+                        side_state.scroll_axis_lock = ScrollAxisLock::Horizontal;
+                        y = 0.0;
+                    }
+                }
+                ScrollAxisLock::Vertical => {
+                    x = 0.0;
+                }
+                ScrollAxisLock::Horizontal => {
+                    y = 0.0;
+                }
+            }
         }
 
         let base = normalize_after_deadzone(mag_raw, params.deadzone);
@@ -766,6 +799,159 @@ impl StickProcessor {
             Direction::Down => gamacros_control::Key::DownArrow,
             Direction::Left => gamacros_control::Key::LeftArrow,
             Direction::Right => gamacros_control::Key::RightArrow,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gamacros_workspace::{ScrollParams, ScrollRuntimeParams};
+
+    fn scroll_params(horizontal: bool, axis_lock: bool) -> ScrollParams {
+        ScrollParams {
+            deadzone: 0.15,
+            speed_lines_s: 120.0,
+            horizontal,
+            axis_lock,
+            invert_x: false,
+            invert_y: false,
+            runtime: ScrollRuntimeParams {
+                tick_ms: 4,
+                smoothing_window_ms: 25,
+                gamma: 1.5,
+                trigger_boost_max: 0.0,
+                trigger_boost_gamma: 1.5,
+            },
+        }
+    }
+
+    /// Create axes array with right stick values (indices 2=RightX, 3=RightY).
+    fn right_stick_axes(x: f32, y: f32) -> [f32; 6] {
+        [0.0, 0.0, x, y, 0.0, 0.0]
+    }
+
+    fn collect_scroll_effects(effects: &[Effect]) -> Vec<(f64, f64)> {
+        effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Scroll { h, v } => Some((*h, *v)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Tick scroll multiple times to push filtered values past smoothing.
+    fn tick_scroll_n(
+        proc: &mut StickProcessor,
+        params: &ScrollParams,
+        axes: [f32; 6],
+        n: usize,
+    ) -> Vec<Effect> {
+        let mut effects = Vec::new();
+        for _ in 0..n {
+            proc.tick_scroll_side(
+                1,
+                axes,
+                StickSide::Right,
+                params,
+                0.010,
+                &mut |e| effects.push(e),
+            );
+        }
+        effects
+    }
+
+    // --- axis_lock tests ---
+
+    #[test]
+    fn axis_lock_locks_to_vertical_when_y_dominant() {
+        let mut proc = StickProcessor::new();
+        let params = scroll_params(true, true);
+
+        // Push stick mostly down (y=0.8) with slight horizontal drift (x=0.1)
+        let effects = tick_scroll_n(&mut proc, &params, right_stick_axes(0.1, 0.8), 20);
+        let scrolls = collect_scroll_effects(&effects);
+
+        // Should have vertical scroll but NO horizontal scroll
+        assert!(!scrolls.is_empty(), "should produce scroll effects");
+        for (h, _v) in &scrolls {
+            assert_eq!(*h, 0.0, "horizontal scroll should be locked out");
+        }
+        assert!(
+            scrolls.iter().any(|(_, v)| *v != 0.0),
+            "should have vertical scroll"
+        );
+    }
+
+    #[test]
+    fn axis_lock_locks_to_horizontal_when_x_dominant() {
+        let mut proc = StickProcessor::new();
+        let params = scroll_params(true, true);
+
+        // Push stick mostly right (x=0.8) with slight vertical drift (y=0.1)
+        let effects = tick_scroll_n(&mut proc, &params, right_stick_axes(0.8, 0.1), 20);
+        let scrolls = collect_scroll_effects(&effects);
+
+        assert!(!scrolls.is_empty(), "should produce scroll effects");
+        for (_h, v) in &scrolls {
+            assert_eq!(*v, 0.0, "vertical scroll should be locked out");
+        }
+        assert!(
+            scrolls.iter().any(|(h, _)| *h != 0.0),
+            "should have horizontal scroll"
+        );
+    }
+
+    #[test]
+    fn axis_lock_resets_when_stick_returns_to_deadzone() {
+        let mut proc = StickProcessor::new();
+        let params = scroll_params(true, true);
+
+        // First: scroll vertically to lock axis
+        tick_scroll_n(&mut proc, &params, right_stick_axes(0.1, 0.8), 10);
+
+        // Return to deadzone
+        tick_scroll_n(&mut proc, &params, right_stick_axes(0.0, 0.0), 5);
+
+        // Now scroll horizontally — should lock to horizontal
+        let effects = tick_scroll_n(&mut proc, &params, right_stick_axes(0.8, 0.1), 20);
+        let scrolls = collect_scroll_effects(&effects);
+
+        assert!(!scrolls.is_empty(), "should produce scroll effects");
+        for (_h, v) in &scrolls {
+            assert_eq!(*v, 0.0, "vertical scroll should be locked out after reset");
+        }
+    }
+
+    #[test]
+    fn no_axis_lock_allows_both_axes() {
+        let mut proc = StickProcessor::new();
+        let params = scroll_params(true, false); // horizontal=true, axis_lock=false
+
+        // Push stick diagonally
+        let effects = tick_scroll_n(&mut proc, &params, right_stick_axes(0.5, 0.5), 20);
+        let scrolls = collect_scroll_effects(&effects);
+
+        assert!(!scrolls.is_empty(), "should produce scroll effects");
+        let has_h = scrolls.iter().any(|(h, _)| *h != 0.0);
+        let has_v = scrolls.iter().any(|(_, v)| *v != 0.0);
+        assert!(has_h, "should have horizontal scroll without axis_lock");
+        assert!(has_v, "should have vertical scroll without axis_lock");
+    }
+
+    #[test]
+    fn horizontal_false_zeroes_x_axis() {
+        let mut proc = StickProcessor::new();
+        let params = scroll_params(false, false); // horizontal=false
+
+        // Push stick diagonally
+        let effects = tick_scroll_n(&mut proc, &params, right_stick_axes(0.5, 0.8), 20);
+        let scrolls = collect_scroll_effects(&effects);
+
+        assert!(!scrolls.is_empty(), "should produce scroll effects");
+        for (h, _v) in &scrolls {
+            assert_eq!(*h, 0.0, "horizontal scroll should be zero when horizontal=false");
         }
     }
 }

@@ -168,19 +168,18 @@ impl<'a> ActionRunner<'a> {
         }
     }
 
-    fn run_shell(&mut self, cmd: &str) -> Result<String, String> {
+    fn run_shell(&mut self, cmd: &str) -> Result<(), String> {
         let shell = self.shell.clone().unwrap_or(DEFAULT_SHELL.into());
-        let result = Command::new(shell.into_string().as_str())
+        match Command::new(shell.into_string().as_str())
             .args(["-c", cmd])
-            .output();
-
-        match result {
-            Ok(output) => {
-                print_info!(
-                    "shell command output: {}",
-                    String::from_utf8_lossy(&output.stdout)
-                );
-                Ok(String::from_utf8_lossy(&output.stdout).to_string())
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+        {
+            Ok(_) => {
+                print_info!("shell command spawned");
+                Ok(())
             }
             Err(e) => {
                 print_error!("shell command error: {}", e);

@@ -65,12 +65,21 @@ pub(super) struct ControllerRepeatState {
     pub(super) sides: [SideRepeatState; 2],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum ScrollAxisLock {
+    #[default]
+    None,
+    Horizontal,
+    Vertical,
+}
+
 #[derive(Default)]
 pub(super) struct SideRepeatState {
     pub(super) mouse_filtered: (f32, f32),
     pub(super) mouse_accum: (f32, f32),
     pub(super) scroll_filtered: (f32, f32),
     pub(super) scroll_accum: (f32, f32),
+    pub(super) scroll_axis_lock: ScrollAxisLock,
     pub(super) arrows: [Option<RepeatTaskState>; 4],
     pub(super) volume: [Option<RepeatTaskState>; 4],
     pub(super) brightness: [Option<RepeatTaskState>; 4],

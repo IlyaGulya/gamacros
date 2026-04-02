@@ -194,6 +194,8 @@ pub struct MouseParams {
     pub outer_deadzone: f32,
     pub max_speed_px_s: f32,
     pub gamma: f32,
+    pub precision_multiplier: f32,
+    pub precision_button: Option<gamacros_gamepad::Button>,
     pub invert_x: bool,
     pub invert_y: bool,
     pub runtime: MouseRuntimeParams,
@@ -212,6 +214,9 @@ pub struct ScrollParams {
     pub deadzone: f32,
     pub speed_lines_s: f32,
     pub horizontal: bool,
+    /// When true, locks to the dominant axis once scrolling starts.
+    /// Unlocks when the stick returns to the deadzone.
+    pub axis_lock: bool,
     pub invert_x: bool,
     pub invert_y: bool,
     pub runtime: ScrollRuntimeParams,

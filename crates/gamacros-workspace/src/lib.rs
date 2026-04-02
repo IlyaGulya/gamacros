@@ -14,7 +14,8 @@ pub use profile_watcher::{ProfileWatcher, ProfileEvent};
 pub use profile_parse::parse_profile;
 pub use profile::{
     Profile, ButtonAction, ButtonRule, ControllerSettings, ControllerSettingsMap,
-    StickRules, ArrowsParams, Axis, MouseParams, ScrollParams, StepperParams,
+    StickRules, ArrowsParams, Axis, MouseParams, MouseRuntimeParams,
+    ScrollParams, ScrollRuntimeParams, StepperParams,
     StickMode, StickSide, AppRules, RuleMap, ButtonRules, Macros, MouseButton,
     MouseClickType, RawModifierKey,
 };

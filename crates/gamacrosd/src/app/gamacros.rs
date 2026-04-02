@@ -238,25 +238,49 @@ impl Gamacros {
         self.button_repeats.retain(|(cid, _), _| *cid != id);
     }
 
+    fn is_precision_active(&self, bindings: Option<&CompiledStickRules>) -> bool {
+        let Some(bindings) = bindings else {
+            return false;
+        };
+        // Collect precision buttons from all mouse_move stick modes.
+        let mut buttons: Vec<Button> = Vec::new();
+        for mode in [bindings.left(), bindings.right()] {
+            if let Some(StickMode::MouseMove(params)) = mode {
+                if let Some(btn) = params.precision_button {
+                    buttons.push(btn);
+                }
+            }
+        }
+        if buttons.is_empty() {
+            return false;
+        }
+        self.controllers.values().any(|st| {
+            buttons.iter().any(|btn| st.pressed.contains(*btn))
+        })
+    }
+
     pub fn on_tick_with<F: FnMut(Effect)>(&mut self, sink: F) {
         let started_at = Instant::now();
         let bindings_owned = self.get_compiled_stick_rules().cloned();
+        let precision = self.is_precision_active(bindings_owned.as_ref());
         self.axes_scratch.clear();
         self.axes_scratch.reserve(self.controllers.len());
         for (id, st) in self.controllers.iter() {
             self.axes_scratch.push((*id, st.axes));
         }
         print_debug!(
-            "stick tick: controllers={} axes_snapshots={} has_bindings={} active_repeats={} button_repeats={}",
+            "stick tick: controllers={} axes_snapshots={} has_bindings={} active_repeats={} button_repeats={} precision={}",
             self.controllers.len(),
             self.axes_scratch.len(),
             bindings_owned.is_some(),
             self.sticks.borrow().has_active_repeats(),
-            self.button_repeats.len()
+            self.button_repeats.len(),
+            precision
         );
         self.sticks.borrow_mut().on_tick_with(
             bindings_owned.as_ref(),
             &self.axes_scratch,
+            precision,
             sink,
         );
         print_debug!(

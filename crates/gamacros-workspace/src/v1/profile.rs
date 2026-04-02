@@ -90,6 +90,10 @@ pub(crate) struct ProfileV1Stick {
     #[serde(default)]
     pub outer_deadzone: Option<f32>,
     #[serde(default)]
+    pub precision_multiplier: Option<f32>,
+    #[serde(default)]
+    pub precision_button: Option<String>,
+    #[serde(default)]
     pub max_speed_px_s: Option<f32>,
     #[serde(default)]
     pub gamma: Option<f32>,
@@ -102,6 +106,8 @@ pub(crate) struct ProfileV1Stick {
     pub speed_lines_s: Option<f32>,
     #[serde(default)]
     pub horizontal: Option<bool>,
+    #[serde(default)]
+    pub axis_lock: Option<bool>,
     #[serde(default)]
     pub trigger_boost_max: Option<f32>,
     #[serde(default)]

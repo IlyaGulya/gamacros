@@ -106,7 +106,7 @@ pub(crate) fn start_runtime_thread(
 
         loop {
             // Wait for an SDL event or timeout to reduce idle CPU usage
-            if let Some(event) = event_pump.wait_event_timeout(10) {
+            if let Some(event) = event_pump.wait_event_timeout(1) {
                 match event {
                     Event::ControllerDeviceAdded { which, .. } => {
                         if let Ok(controller) = controller_subsystem.open(which) {

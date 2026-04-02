@@ -308,11 +308,18 @@ fn parse_stick_mode(raw: ProfileV1Stick) -> Result<StickMode, Error> {
             StickMode::Arrows(params)
         }
         "mouse_move" => {
+            let precision_button = raw
+                .precision_button
+                .as_deref()
+                .map(parse_button_name)
+                .transpose()?;
             let params = MouseParams {
                 deadzone,
                 outer_deadzone: raw.outer_deadzone.unwrap_or(0.05),
                 max_speed_px_s: raw.max_speed_px_s.unwrap_or(1600.0),
                 gamma: raw.gamma.unwrap_or(2.2),
+                precision_multiplier: raw.precision_multiplier.unwrap_or(0.25),
+                precision_button,
                 invert_x: raw.invert_x.unwrap_or(false),
                 invert_y: raw.invert_y.unwrap_or(false),
                 runtime: MouseRuntimeParams {
@@ -327,6 +334,7 @@ fn parse_stick_mode(raw: ProfileV1Stick) -> Result<StickMode, Error> {
                 deadzone,
                 speed_lines_s: raw.speed_lines_s.unwrap_or(100.0),
                 horizontal: raw.horizontal.unwrap_or(false),
+                axis_lock: raw.axis_lock.unwrap_or(false),
                 invert_x: raw.invert_x.unwrap_or(false),
                 invert_y: raw.invert_y.unwrap_or(false),
                 runtime: ScrollRuntimeParams {
