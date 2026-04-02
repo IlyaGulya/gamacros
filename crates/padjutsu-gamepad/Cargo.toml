@@ -1,0 +1,23 @@
+[package]
+name = "padjutsu-gamepad"
+version = "0.0.0"
+publish = false
+authors = { workspace = true }
+edition = { workspace = true }
+rust-version = { workspace = true }
+homepage = { workspace = true }
+documentation = { workspace = true }
+repository = { workspace = true }
+license = { workspace = true }
+
+[features]
+default = ["sdl2-backend"]
+sdl2-backend = []
+
+[dependencies]
+thiserror = { workspace = true }
+sdl2 = { workspace = true }
+crossbeam-channel = { workspace = true }
+padjutsu-bit-derive = { workspace = true }
+padjutsu-bit-mask = { workspace = true }
+ahash = { workspace = true }

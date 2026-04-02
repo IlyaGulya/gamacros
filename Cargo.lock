@@ -632,92 +632,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gamacros-bit-derive"
-version = "0.0.0"
-dependencies = [
- "gamacros-bit-mask",
- "proc-macro2",
- "quote",
- "syn",
-]
-
-[[package]]
-name = "gamacros-bit-mask"
-version = "0.0.0"
-dependencies = [
- "gamacros-bit-derive",
-]
-
-[[package]]
-name = "gamacros-control"
-version = "0.0.0"
-dependencies = [
- "core-graphics",
- "enigo",
- "log",
- "serde",
- "smallvec",
-]
-
-[[package]]
-name = "gamacros-gamepad"
-version = "0.0.0"
-dependencies = [
- "ahash",
- "crossbeam-channel",
- "gamacros-bit-derive",
- "gamacros-bit-mask",
- "sdl2",
- "thiserror",
-]
-
-[[package]]
-name = "gamacros-workspace"
-version = "0.0.0"
-dependencies = [
- "ahash",
- "codspeed-criterion-compat",
- "criterion",
- "gamacros-bit-mask",
- "gamacros-control",
- "gamacros-gamepad",
- "log",
- "notify",
- "notify-debouncer-mini",
- "serde",
- "serde_yaml",
- "smallvec",
- "thiserror",
-]
-
-[[package]]
-name = "gamacrosd"
-version = "0.1.2"
-dependencies = [
- "ahash",
- "bitcode",
- "chrono",
- "clap",
- "codspeed-criterion-compat",
- "colored 3.0.0",
- "criterion",
- "crossbeam-channel",
- "ctrlc",
- "enigo",
- "fd-lock",
- "fern",
- "gamacros-bit-mask",
- "gamacros-control",
- "gamacros-gamepad",
- "gamacros-workspace",
- "log",
- "lunchctl",
- "nsworkspace",
- "smallvec",
- "thiserror",
-]
-
-[[package]]
 name = "gethostname"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1187,6 +1101,92 @@ name = "oorandom"
 version = "11.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6790f58c7ff633d8771f42965289203411a5e5c68388703c06e14f24770b41e"
+
+[[package]]
+name = "padjutsu-bit-derive"
+version = "0.0.0"
+dependencies = [
+ "padjutsu-bit-mask",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "padjutsu-bit-mask"
+version = "0.0.0"
+dependencies = [
+ "padjutsu-bit-derive",
+]
+
+[[package]]
+name = "padjutsu-control"
+version = "0.0.0"
+dependencies = [
+ "core-graphics",
+ "enigo",
+ "log",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
+name = "padjutsu-gamepad"
+version = "0.0.0"
+dependencies = [
+ "ahash",
+ "crossbeam-channel",
+ "padjutsu-bit-derive",
+ "padjutsu-bit-mask",
+ "sdl2",
+ "thiserror",
+]
+
+[[package]]
+name = "padjutsu-workspace"
+version = "0.0.0"
+dependencies = [
+ "ahash",
+ "codspeed-criterion-compat",
+ "criterion",
+ "log",
+ "notify",
+ "notify-debouncer-mini",
+ "padjutsu-bit-mask",
+ "padjutsu-control",
+ "padjutsu-gamepad",
+ "serde",
+ "serde_yaml",
+ "smallvec",
+ "thiserror",
+]
+
+[[package]]
+name = "padjutsud"
+version = "0.1.2"
+dependencies = [
+ "ahash",
+ "bitcode",
+ "chrono",
+ "clap",
+ "codspeed-criterion-compat",
+ "colored 3.0.0",
+ "criterion",
+ "crossbeam-channel",
+ "ctrlc",
+ "enigo",
+ "fd-lock",
+ "fern",
+ "log",
+ "lunchctl",
+ "nsworkspace",
+ "padjutsu-bit-mask",
+ "padjutsu-control",
+ "padjutsu-gamepad",
+ "padjutsu-workspace",
+ "smallvec",
+ "thiserror",
+]
 
 [[package]]
 name = "plist"

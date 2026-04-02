@@ -1,8 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
-readonly REPO="mishamyrt/gamacros"
-readonly BINARY_NAME="gamacrosd"
+readonly REPO="mishamyrt/padjutsu"
+readonly BINARY_NAME="padjutsud"
 
 # Colors
 readonly RED='\033[0;31m'
@@ -25,7 +25,7 @@ info() {
 
 show_help() {
     cat << EOF
-gamacros installer
+padjutsu installer
 
 Usage: $0 [OPTIONS]
 
@@ -130,7 +130,7 @@ download_binary() {
     fi
 
     # Binary is inside platform-specific directory
-    local platform_dir="gamacrosd-${PLATFORM}"
+    local platform_dir="padjutsud-${PLATFORM}"
     if [[ -f "$platform_dir/$BINARY_NAME" ]]; then
         mv "$platform_dir/$BINARY_NAME" . || error "Failed to move binary"
     elif [[ -f "$BINARY_NAME" ]]; then
@@ -206,16 +206,16 @@ main() {
         # Add 'v' prefix if missing
         [[ "$version" == v* ]] || version="v$version"
         LATEST_VERSION="$version"
-        info "Installing gamacros $LATEST_VERSION"
+        info "Installing padjutsu $LATEST_VERSION"
     else
         get_latest_version
-        info "Installing gamacros $LATEST_VERSION"
+        info "Installing padjutsu $LATEST_VERSION"
     fi
 
     download_binary "$LATEST_VERSION"
     install_binary
 
-    info "Installation complete! Run 'gamacrosd --version' to verify."
+    info "Installation complete! Run 'padjutsud --version' to verify."
 }
 
 main "$@"

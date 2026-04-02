@@ -2,6 +2,6 @@
   "database": "dolt",
   "backend": "dolt",
   "dolt_mode": "server",
-  "dolt_database": "gamacros",
+  "dolt_database": "padjutsu",
   "project_id": "2e534e65-9472-4887-9706-a003a76c713c"
 }

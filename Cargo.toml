@@ -1,31 +1,31 @@
 [workspace]
 members = [
-  "crates/gamacros-control",
-  "crates/gamacros-gamepad",
-  "crates/gamacros-workspace",
-  "crates/gamacros-bit/derive",
-  "crates/gamacros-bit/mask",
-  "crates/gamacrosd",
+  "crates/padjutsu-control",
+  "crates/padjutsu-gamepad",
+  "crates/padjutsu-workspace",
+  "crates/padjutsu-bit/derive",
+  "crates/padjutsu-bit/mask",
+  "crates/padjutsud",
 ]
 resolver = "2"
 
 [workspace.package]
 edition = "2021"
 rust-version = "1.80"
-homepage = "https://github.com/mishamyrt/gamacros"
+homepage = "https://github.com/mishamyrt/padjutsu"
 documentation = "https://github.com/mishamyrt/gamacro"
-repository = "https://github.com/mishamyrt/gamacros"
+repository = "https://github.com/mishamyrt/padjutsu"
 authors = ["Mikhael Khrustik <misha@myrt.co>"]
 license = "MIT"
 
 [workspace.dependencies]
 # Internal crates
-gamacrosd = { path = "crates/gamacrosd" }
-gamacros-control = { path = "crates/gamacros-control" }
-gamacros-gamepad = { path = "crates/gamacros-gamepad" }
-gamacros-workspace = { path = "crates/gamacros-workspace" }
-gamacros-bit-derive = { path = "crates/gamacros-bit/derive" }
-gamacros-bit-mask = { path = "crates/gamacros-bit/mask" }
+padjutsud = { path = "crates/padjutsud" }
+padjutsu-control = { path = "crates/padjutsu-control" }
+padjutsu-gamepad = { path = "crates/padjutsu-gamepad" }
+padjutsu-workspace = { path = "crates/padjutsu-workspace" }
+padjutsu-bit-derive = { path = "crates/padjutsu-bit/derive" }
+padjutsu-bit-mask = { path = "crates/padjutsu-bit/mask" }
 
 # Error handling
 thiserror = "2.0.12"

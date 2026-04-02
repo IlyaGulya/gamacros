@@ -2,9 +2,9 @@ set export := true
 
 VERSION := "0.1.2"
 
-BIN_PATH_RELEASE := "target/release/gamacrosd"
-BIN_PATH_DEBUG := "target/debug/gamacrosd"
-BIN_PATH_INSTALLED := env_var_or_default("HOME", "") + "/.cargo/bin/gamacrosd"
+BIN_PATH_RELEASE := "target/release/padjutsud"
+BIN_PATH_DEBUG := "target/debug/padjutsud"
+BIN_PATH_INSTALLED := env_var_or_default("HOME", "") + "/.cargo/bin/padjutsud"
 MACOS_DEBUG_SIGN_IDENTITY := "FreeFlow Debug"
 
 BREW_LIBRARY_PATH := `brew --prefix` / "lib"
@@ -17,11 +17,11 @@ clean:
   cargo clean
 
 start *ARGS:
-  cargo run -v -p gamacrosd -- {{ARGS}}
+  cargo run -v -p padjutsud -- {{ARGS}}
 
 [group: 'build']
 install:
-  cargo install --profile release --path crates/gamacrosd
+  cargo install --profile release --path crates/padjutsud
   codesign --force --sign {{ quote(MACOS_DEBUG_SIGN_IDENTITY) }} {{ quote(BIN_PATH_INSTALLED) }}
 
 [group: 'build']
@@ -29,12 +29,12 @@ build: build-release
 
 [group: 'build']
 build-release:
-  cargo build --release -p gamacrosd
+  cargo build --release -p padjutsud
   codesign --force --sign {{ quote(MACOS_DEBUG_SIGN_IDENTITY) }} {{ quote(BIN_PATH_RELEASE) }}
 
 [group: 'build']
 build-debug:
-  cargo build -p gamacrosd
+  cargo build -p padjutsud
   codesign --force --sign {{ quote(MACOS_DEBUG_SIGN_IDENTITY) }} {{ quote(BIN_PATH_DEBUG) }}
 
 # Quality Assurance
@@ -73,43 +73,43 @@ qa: lint check-formatting test
 mem-scenario duration='10':
   #!/usr/bin/env sh
   set -eo pipefail
-  cargo build --release -p gamacrosd
-  "$BIN_PATH_RELEASE" > /tmp/gamacrosd_mem.log 2>&1 &
+  cargo build --release -p padjutsud
+  "$BIN_PATH_RELEASE" > /tmp/padjutsud_mem.log 2>&1 &
   PID=$!
-  echo "Started gamacrosd PID=$PID"
+  echo "Started padjutsud PID=$PID"
   # Give it a moment to initialize
   sleep 2
   # Baseline memory snapshot
   echo "baseline_rss_kb=$(ps -o rss= -p $PID | tr -d ' ')" \
-    | tee /tmp/gamacrosd_mem_metrics.txt
+    | tee /tmp/padjutsud_mem_metrics.txt
   echo "Perform a couple of joystick events now (press 2 buttons, move a stick)" \
-    | tee -a /tmp/gamacrosd_mem_metrics.txt
+    | tee -a /tmp/padjutsud_mem_metrics.txt
   # Allow time for interaction
   sleep {{duration}}
   # After-interaction snapshot
   echo "after_rss_kb=$(ps -o rss= -p $PID | tr -d ' ')" \
-    | tee -a /tmp/gamacrosd_mem_metrics.txt
+    | tee -a /tmp/padjutsud_mem_metrics.txt
   # Optional deep summary if tools exist
   if command -v vmmap >/dev/null; then
     /usr/bin/vmmap -summary $PID | egrep 'Physical footprint|PhysFootprint' \
-        | tee -a /tmp/gamacrosd_mem_metrics.txt || true
+        | tee -a /tmp/padjutsud_mem_metrics.txt || true
   fi
   if command -v leaks >/dev/null; then
-    /usr/bin/leaks -quiet $PID | tail -n 10 | tee -a /tmp/gamacrosd_mem_metrics.txt || true
+    /usr/bin/leaks -quiet $PID | tail -n 10 | tee -a /tmp/padjutsud_mem_metrics.txt || true
   fi
   # Graceful shutdown via SIGINT (same as Ctrl+C)
   kill -INT $PID || true
   wait $PID || true
   # Produce a tiny CSV for quick comparisons
   awk 'BEGIN{print "metric,value"} /rss_kb/{split($0,a,"="); print a[1]","a[2]}' \
-    /tmp/gamacrosd_mem_metrics.txt > /tmp/gamacrosd_mem.csv
-  echo "Saved metrics to /tmp/gamacrosd_mem_metrics.txt and /tmp/gamacrosd_mem.csv"
+    /tmp/padjutsud_mem_metrics.txt > /tmp/padjutsud_mem.csv
+  echo "Saved metrics to /tmp/padjutsud_mem_metrics.txt and /tmp/padjutsud_mem.csv"
 
 [group: 'mem']
 mem-peak:
   #!/usr/bin/env sh
   set -euo pipefail
-  cargo build --release -p gamacrosd
+  cargo build --release -p padjutsud
   echo "Running with /usr/bin/time -l (stop with Ctrl+C after exercising the joystick)"
   /usr/bin/time -l "$BIN_PATH_RELEASE"
 
@@ -117,8 +117,8 @@ mem-peak:
 mem-xctrace duration='15':
   #!/usr/bin/env sh
   set -euo pipefail
-  cargo build --release -p gamacrosd
-  OUT="/tmp/gamacrosd_mem.trace"
+  cargo build --release -p padjutsud
+  OUT="/tmp/padjutsud_mem.trace"
   echo "Recording Instruments Memory Usage trace to $OUT for {{duration}}s..."
   xcrun xctrace record --template 'Memory Usage' --time-limit {{duration}}s --output "$OUT" --launch "$BIN_PATH_RELEASE"
   echo "Done. Open $OUT in Instruments to inspect allocations and footprint."
@@ -126,11 +126,11 @@ mem-xctrace duration='15':
 [group: 'release']
 publish:
 	@python3 ./scripts/update_version.py {{VERSION}}
-	@cargo update -p gamacrosd
+	@cargo update -p padjutsud
 	@git add \
 		justfile \
 		Cargo.lock \
-		crates/gamacrosd/Cargo.toml
+		crates/padjutsud/Cargo.toml
 	@git commit -m "chore: release v{{VERSION}} 🔥"
 	@git tag v{{VERSION}}
 	@git-cliff -o CHANGELOG.md

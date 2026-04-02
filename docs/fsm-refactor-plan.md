@@ -2,12 +2,12 @@
 
 ## Why Change the Architecture
 
-The project is already split into sensible crates, but the runtime behavior in `gamacrosd` is still coordinated through a large mutable orchestration layer with state spread across:
+The project is already split into sensible crates, but the runtime behavior in `padjutsud` is still coordinated through a large mutable orchestration layer with state spread across:
 
-- `crates/gamacrosd/src/main.rs`
-- `crates/gamacrosd/src/app/gamacros.rs`
-- `crates/gamacrosd/src/app/stick/repeat.rs`
-- `crates/gamacrosd/src/app/stick/tick.rs`
+- `crates/padjutsud/src/main.rs`
+- `crates/padjutsud/src/app/padjutsu.rs`
+- `crates/padjutsud/src/app/stick/repeat.rs`
+- `crates/padjutsud/src/app/stick/tick.rs`
 
 This works today, but it makes the following harder than necessary:
 
@@ -51,7 +51,7 @@ This becomes the only input to the runtime core.
 
 ### 2. Centralize Runtime State
 
-Instead of splitting operational state between `main.rs`, `Gamacros`, and stick scheduler internals, move toward one explicit runtime state tree.
+Instead of splitting operational state between `main.rs`, `Padjutsu`, and stick scheduler internals, move toward one explicit runtime state tree.
 
 Example shape:
 
@@ -206,7 +206,7 @@ enum TimerEvent {
 - timer lifecycle is visible in domain transitions
 - `main.rs` no longer owns timer policy details
 
-## Phase 5: Split `Gamacros` into State Slices
+## Phase 5: Split `Padjutsu` into State Slices
 
 ### Goal
 
@@ -216,7 +216,7 @@ Eliminate the current god-object shape.
 
 - identify coherent state slices such as `ProfileState`, `AppState`, `ControllerState`, `StickState`, and `RepeatState`
 - move logic closer to the state it operates on
-- reduce `Gamacros` to a thin facade or remove it entirely in favor of `RuntimeState`
+- reduce `Padjutsu` to a thin facade or remove it entirely in favor of `RuntimeState`
 
 ### Definition of Done
 
@@ -244,10 +244,10 @@ Make runtime modes and controller substates first-class.
 
 ## Suggested Module Layout
 
-This can begin inside `gamacrosd` and later be extracted to a separate crate if needed.
+This can begin inside `padjutsud` and later be extracted to a separate crate if needed.
 
 ```text
-crates/gamacrosd/src/
+crates/padjutsud/src/
   domain/
     mod.rs
     event.rs
@@ -262,7 +262,7 @@ crates/gamacrosd/src/
     ...
 ```
 
-If the boundary proves stable, move `domain/` into a new crate such as `gamacros-domain`.
+If the boundary proves stable, move `domain/` into a new crate such as `padjutsu-domain`.
 
 ## Practical Rules During the Refactor
 
