@@ -36,6 +36,7 @@ pub(super) struct TickPerfStats {
     pub(super) samples: u64,
     pub(super) dt_us_total: u64,
     pub(super) dt_us_max: u64,
+    pub(super) dt_us_spike_count: u64,
     pub(super) tick_elapsed_us_total: u64,
     pub(super) tick_elapsed_us_max: u64,
     pub(super) mouse_mode_ticks: u64,
@@ -46,6 +47,7 @@ pub(super) struct TickPerfStats {
     pub(super) mouse_chunk_over_8: u64,
     pub(super) mouse_chunk_over_16: u64,
     pub(super) mouse_chunk_over_32: u64,
+    pub(super) scroll_events: u64,
     pub(super) last_report_at: Option<Instant>,
 }
 
@@ -65,21 +67,16 @@ pub(super) struct ControllerRepeatState {
     pub(super) sides: [SideRepeatState; 2],
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub(super) enum ScrollAxisLock {
-    #[default]
-    None,
-    Horizontal,
-    Vertical,
-}
-
 #[derive(Default)]
 pub(super) struct SideRepeatState {
     pub(super) mouse_filtered: (f32, f32),
     pub(super) mouse_accum: (f32, f32),
     pub(super) scroll_filtered: (f32, f32),
     pub(super) scroll_accum: (f32, f32),
-    pub(super) scroll_axis_lock: ScrollAxisLock,
+    /// Cumulative absolute scroll per axis since last lock reset (for axis_lock).
+    pub(super) scroll_axis_cum: (f32, f32),
+    /// Accumulated idle time in deadzone (seconds) for axis_lock reset hysteresis.
+    pub(super) scroll_idle_s: f32,
     pub(super) arrows: [Option<RepeatTaskState>; 4],
     pub(super) volume: [Option<RepeatTaskState>; 4],
     pub(super) brightness: [Option<RepeatTaskState>; 4],

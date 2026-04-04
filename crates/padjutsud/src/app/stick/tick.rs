@@ -3,7 +3,7 @@ use padjutsu_gamepad::ControllerId;
 use padjutsu_workspace::{Axis as ProfileAxis, StickMode, StickSide};
 
 use crate::app::Effect;
-use crate::print_debug;
+use crate::{print_debug, print_info};
 
 use super::compiled::CompiledStickRules;
 use super::repeat::{
@@ -161,10 +161,22 @@ impl StickProcessor {
         {
             mouse_perf = self.tick_mouse(dt_s, &mut sink, axes_list, bindings, precision);
         }
-        if matches!(bindings.left(), Some(StickMode::Scroll(_)))
-            || matches!(bindings.right(), Some(StickMode::Scroll(_)))
-        {
+        let has_scroll = matches!(bindings.left(), Some(StickMode::Scroll(_)))
+            || matches!(bindings.right(), Some(StickMode::Scroll(_)));
+        if has_scroll {
             self.tick_scroll(dt_s, &mut sink, axes_list, bindings);
+        }
+        if self.generation % 500 == 1 {
+            let axes_dbg: Vec<_> = axes_list.iter().map(|(cid, a)| {
+                format!("c{cid}:LX={:.2},LY={:.2},RX={:.2},RY={:.2},LT={:.2},RT={:.2}", a[0],a[1],a[2],a[3],a[4],a[5])
+            }).collect();
+            print_info!(
+                "stick modes: left={:?} right={:?} has_scroll={} axes=[{}]",
+                bindings.left().map(|m| std::mem::discriminant(m)),
+                bindings.right().map(|m| std::mem::discriminant(m)),
+                has_scroll,
+                axes_dbg.join("; ")
+            );
         }
 
         // Repeat draining is now event-driven, cleanup still needs to run per generation
@@ -173,6 +185,9 @@ impl StickProcessor {
         self.perf.samples += 1;
         self.perf.dt_us_total += dt_us;
         self.perf.dt_us_max = self.perf.dt_us_max.max(dt_us);
+        if dt_us > 8000 {
+            self.perf.dt_us_spike_count += 1;
+        }
         self.perf.tick_elapsed_us_total += tick_elapsed_us;
         self.perf.tick_elapsed_us_max =
             self.perf.tick_elapsed_us_max.max(tick_elapsed_us);
@@ -197,11 +212,12 @@ impl StickProcessor {
             let avg_dt_us = self.perf.dt_us_total / self.perf.samples.max(1);
             let avg_tick_elapsed_us =
                 self.perf.tick_elapsed_us_total / self.perf.samples.max(1);
-            print_debug!(
-                "perf stick: samples={} avg_dt_us={} max_dt_us={} avg_tick_elapsed_us={} max_tick_elapsed_us={} mouse_mode_ticks={} mouse_move_events={} mouse_zero_move_ticks={} mouse_distance_total={:.1} mouse_chunk_max={} mouse_chunk_over_8={} mouse_chunk_over_16={} mouse_chunk_over_32={}",
+            print_info!(
+                "perf stick: samples={} avg_dt_us={} max_dt_us={} dt_us_spikes={} avg_tick_elapsed_us={} max_tick_elapsed_us={} mouse_mode_ticks={} mouse_move_events={} mouse_zero_move_ticks={} mouse_distance_total={:.1} mouse_chunk_max={} mouse_chunk_over_8={} mouse_chunk_over_16={} mouse_chunk_over_32={} scroll_events={}",
                 self.perf.samples,
                 avg_dt_us,
                 self.perf.dt_us_max,
+                self.perf.dt_us_spike_count,
                 avg_tick_elapsed_us,
                 self.perf.tick_elapsed_us_max,
                 self.perf.mouse_mode_ticks,
@@ -211,7 +227,8 @@ impl StickProcessor {
                 self.perf.mouse_chunk_max,
                 self.perf.mouse_chunk_over_8,
                 self.perf.mouse_chunk_over_16,
-                self.perf.mouse_chunk_over_32
+                self.perf.mouse_chunk_over_32,
+                self.perf.scroll_events
             );
             self.perf = super::repeat::TickPerfStats {
                 last_report_at: Some(now),
@@ -681,40 +698,27 @@ impl StickProcessor {
             alpha * (raw_x - side_state.scroll_filtered.0);
         side_state.scroll_filtered.1 +=
             alpha * (raw_y - side_state.scroll_filtered.1);
+
+        // ── Deadzone ── identical to original (no axis_lock awareness) ──
         let mut x = side_state.scroll_filtered.0;
-        let mut y = side_state.scroll_filtered.1;
+        let y = side_state.scroll_filtered.1;
         if !params.horizontal {
             x = 0.0;
         }
         let mag_raw = x.abs().max(y.abs());
         if mag_raw <= params.deadzone {
-            side_state.scroll_filtered = (0.0, 0.0);
-            side_state.scroll_accum = (0.0, 0.0);
-            side_state.scroll_axis_lock = super::repeat::ScrollAxisLock::None;
-            return;
-        }
-        // Axis lock: once scrolling starts, lock to the dominant axis.
-        if params.horizontal && params.axis_lock {
-            use super::repeat::ScrollAxisLock;
-            match side_state.scroll_axis_lock {
-                ScrollAxisLock::None => {
-                    // Determine dominant axis from filtered values
-                    if y.abs() >= x.abs() {
-                        side_state.scroll_axis_lock = ScrollAxisLock::Vertical;
-                        x = 0.0;
-                    } else {
-                        side_state.scroll_axis_lock = ScrollAxisLock::Horizontal;
-                        y = 0.0;
-                    }
-                }
-                ScrollAxisLock::Vertical => {
-                    x = 0.0;
-                }
-                ScrollAxisLock::Horizontal => {
-                    y = 0.0;
+            if params.horizontal && params.axis_lock {
+                side_state.scroll_idle_s += dt_s;
+                if side_state.scroll_idle_s >= 0.2 {
+                    side_state.scroll_axis_cum = (0.0, 0.0);
                 }
             }
+            // Don't reset scroll_filtered here — let the smoothing filter
+            // track the raw values freely. Only reset the accumulator.
+            side_state.scroll_accum = (0.0, 0.0);
+            return;
         }
+        side_state.scroll_idle_s = 0.0;
 
         let base = normalize_after_deadzone(mag_raw, params.deadzone);
         let mag = Self::fast_gamma(base, params.runtime.gamma);
@@ -731,11 +735,27 @@ impl StickProcessor {
             params.runtime.gamma,
             params.speed_lines_s
         );
+
+        // ── Accumulate ──
         let accum = &mut side_state.scroll_accum;
         const SCROLL_SPEED_MULTIPLIER: f32 = 6.0;
         let speed = params.speed_lines_s * SCROLL_SPEED_MULTIPLIER * trigger_boost;
         accum.0 += speed * sx * dt_s;
         accum.1 += speed * sy * dt_s;
+
+        // ── Axis lock: filter the OUTPUT, not the input ──
+        // Track cumulative scroll per axis; lock to whichever has more.
+        if params.horizontal && params.axis_lock {
+            side_state.scroll_axis_cum.0 += accum.0.abs();
+            side_state.scroll_axis_cum.1 += accum.1.abs();
+            let (cx, cy) = side_state.scroll_axis_cum;
+            if cy >= cx {
+                accum.0 = 0.0; // suppress horizontal
+            } else {
+                accum.1 = 0.0; // suppress vertical
+            }
+        }
+
         let h = f64::from(accum.0);
         let v = f64::from(accum.1);
         if h.abs() >= 0.01 {
@@ -745,6 +765,7 @@ impl StickProcessor {
                 accum.1
             );
             (sink)(Effect::Scroll { h, v: 0.0 });
+            self.perf.scroll_events += 1;
             accum.0 = 0.0;
         }
         if v.abs() >= 0.01 {
@@ -754,6 +775,7 @@ impl StickProcessor {
                 accum.1
             );
             (sink)(Effect::Scroll { h: 0.0, v });
+            self.perf.scroll_events += 1;
             accum.1 = 0.0;
         }
         print_debug!(
@@ -841,12 +863,13 @@ mod tests {
             .collect()
     }
 
-    /// Tick scroll multiple times to push filtered values past smoothing.
-    fn tick_scroll_n(
+    /// Tick scroll multiple times with configurable dt.
+    fn tick_scroll_n_dt(
         proc: &mut StickProcessor,
         params: &ScrollParams,
         axes: [f32; 6],
         n: usize,
+        dt_s: f32,
     ) -> Vec<Effect> {
         let mut effects = Vec::new();
         for _ in 0..n {
@@ -855,11 +878,21 @@ mod tests {
                 axes,
                 StickSide::Right,
                 params,
-                0.010,
+                dt_s,
                 &mut |e| effects.push(e),
             );
         }
         effects
+    }
+
+    /// Tick scroll multiple times with default dt (10ms).
+    fn tick_scroll_n(
+        proc: &mut StickProcessor,
+        params: &ScrollParams,
+        axes: [f32; 6],
+        n: usize,
+    ) -> Vec<Effect> {
+        tick_scroll_n_dt(proc, params, axes, n, 0.010)
     }
 
     // --- axis_lock tests ---
@@ -911,8 +944,8 @@ mod tests {
         // First: scroll vertically to lock axis
         tick_scroll_n(&mut proc, &params, right_stick_axes(0.1, 0.8), 10);
 
-        // Return to deadzone
-        tick_scroll_n(&mut proc, &params, right_stick_axes(0.0, 0.0), 5);
+        // Return to deadzone for 200ms+ (each tick is 10ms, so 25 ticks = 250ms)
+        tick_scroll_n(&mut proc, &params, right_stick_axes(0.0, 0.0), 25);
 
         // Now scroll horizontally — should lock to horizontal
         let effects = tick_scroll_n(&mut proc, &params, right_stick_axes(0.8, 0.1), 20);
@@ -938,6 +971,54 @@ mod tests {
         let has_v = scrolls.iter().any(|(_, v)| *v != 0.0);
         assert!(has_h, "should have horizontal scroll without axis_lock");
         assert!(has_v, "should have vertical scroll without axis_lock");
+    }
+
+    #[test]
+    fn scroll_works_with_small_dt() {
+        // Regression: with 2ms ticks (dt=0.002), the smoothing filter alpha is very small.
+        // If scroll_filtered is reset to zero in the deadzone branch, the filter can never
+        // ramp past the deadzone threshold in a single tick, causing scroll to never start.
+        let mut proc = StickProcessor::new();
+        let params = scroll_params(false, false);
+
+        // Simulate 2ms ticks — 100 ticks = 200ms, plenty of time to ramp up
+        let effects = tick_scroll_n_dt(
+            &mut proc, &params, right_stick_axes(0.0, 0.8), 100, 0.002,
+        );
+        let scrolls = collect_scroll_effects(&effects);
+
+        assert!(
+            !scrolls.is_empty(),
+            "scroll must work with 2ms tick interval"
+        );
+        assert!(
+            scrolls.iter().any(|(_, v)| *v != 0.0),
+            "should have vertical scroll with small dt"
+        );
+    }
+
+    #[test]
+    fn scroll_survives_direction_change() {
+        // When changing direction (up→down), the stick briefly crosses through
+        // the deadzone. Scroll should resume without interruption.
+        let mut proc = StickProcessor::new();
+        let params = scroll_params(false, false);
+
+        // Scroll down
+        let effects1 = tick_scroll_n(&mut proc, &params, right_stick_axes(0.0, 0.8), 20);
+        let scrolls1 = collect_scroll_effects(&effects1);
+        assert!(!scrolls1.is_empty(), "initial scroll should work");
+
+        // Brief pass through center (2 ticks = 20ms, simulates direction change)
+        tick_scroll_n(&mut proc, &params, right_stick_axes(0.0, 0.0), 2);
+
+        // Scroll up — should start quickly
+        let effects2 = tick_scroll_n(&mut proc, &params, right_stick_axes(0.0, -0.8), 20);
+        let scrolls2 = collect_scroll_effects(&effects2);
+        assert!(
+            !scrolls2.is_empty(),
+            "scroll must resume after direction change"
+        );
     }
 
     #[test]

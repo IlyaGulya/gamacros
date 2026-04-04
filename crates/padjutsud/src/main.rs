@@ -19,7 +19,7 @@ use lunchctl::{LaunchAgent, LaunchControllable};
 use crate::activity::{Monitor, NotificationListener};
 
 use padjutsu_control::Performer;
-use padjutsu_gamepad::{ControllerEvent, ControllerManager};
+use padjutsu_gamepad::{ControllerEvent, ControllerManager, set_realtime_priority};
 use padjutsu_workspace::Workspace;
 
 use crate::api::{ApiTransport, Command as ApiCommand, UnixSocket};
@@ -365,6 +365,8 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
         .name("event-loop".into())
         .stack_size(512 * 1024)
         .spawn(move || {
+            set_realtime_priority();
+
             let manager = ControllerManager::new()
                 .expect("failed to start controller manager");
             let rx = manager.subscribe();

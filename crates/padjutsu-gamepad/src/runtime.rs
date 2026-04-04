@@ -13,6 +13,109 @@ use crate::events::ControllerEvent;
 use crate::manager::Inner;
 use crate::types::{Button, ControllerId, ControllerInfo, Axis};
 
+// --- Mach real-time thread priority via raw FFI ---
+
+#[cfg(target_os = "macos")]
+mod mach_rt {
+    use std::os::raw::c_int;
+
+    type KernReturnT = c_int;
+    type MachPortT = u32;
+    type ThreadActT = MachPortT;
+    type ThreadPolicyFlavorT = c_int;
+    type MachMsgTypeNumberT = u32;
+
+    const THREAD_TIME_CONSTRAINT_POLICY: ThreadPolicyFlavorT = 2;
+    const THREAD_TIME_CONSTRAINT_POLICY_COUNT: MachMsgTypeNumberT = 4;
+    const KERN_SUCCESS: KernReturnT = 0;
+
+    #[repr(C)]
+    struct ThreadTimeConstraintPolicy {
+        period: u32,
+        computation: u32,
+        constraint: u32,
+        preemptible: u32, // boolean_t is typedef'd as int on macOS
+    }
+
+    #[repr(C)]
+    struct MachTimebaseInfo {
+        numer: u32,
+        denom: u32,
+    }
+
+    extern "C" {
+        fn mach_thread_self() -> ThreadActT;
+        fn thread_policy_set(
+            thread: ThreadActT,
+            flavor: ThreadPolicyFlavorT,
+            policy_info: *const ThreadTimeConstraintPolicy,
+            count: MachMsgTypeNumberT,
+        ) -> KernReturnT;
+        fn mach_timebase_info(info: *mut MachTimebaseInfo) -> KernReturnT;
+    }
+
+    /// Convert nanoseconds to Mach absolute time units.
+    fn ns_to_abs(ns: u64) -> u32 {
+        let mut info = MachTimebaseInfo { numer: 0, denom: 0 };
+        unsafe {
+            mach_timebase_info(&mut info);
+        }
+        // abs_time = ns * denom / numer
+        ((ns as u64) * (info.denom as u64) / (info.numer as u64)) as u32
+    }
+
+    pub fn set_realtime_priority_impl() {
+        // Parameters for a 2ms input processing loop:
+        //   period:      2ms   (how often we need CPU)
+        //   computation: 500us (how much CPU per period)
+        //   constraint:  1ms   (deadline within period)
+        //   preemptible: true
+        let period_ns: u64 = 2_000_000; // 2ms
+        let computation_ns: u64 = 500_000; // 500us
+        let constraint_ns: u64 = 1_000_000; // 1ms
+
+        let policy = ThreadTimeConstraintPolicy {
+            period: ns_to_abs(period_ns),
+            computation: ns_to_abs(computation_ns),
+            constraint: ns_to_abs(constraint_ns),
+            preemptible: 1,
+        };
+
+        let thread = unsafe { mach_thread_self() };
+        let kr = unsafe {
+            thread_policy_set(
+                thread,
+                THREAD_TIME_CONSTRAINT_POLICY,
+                &policy,
+                THREAD_TIME_CONSTRAINT_POLICY_COUNT,
+            )
+        };
+
+        if kr == KERN_SUCCESS {
+            eprintln!("[padjutsu-gamepad] real-time thread priority set (period=2ms computation=500us constraint=1ms)");
+        } else {
+            eprintln!("[padjutsu-gamepad] WARNING: failed to set real-time thread priority (kern_return={})", kr);
+        }
+    }
+}
+
+/// Set the calling thread to macOS real-time priority using `THREAD_TIME_CONSTRAINT_POLICY`.
+///
+/// This is the proper macOS real-time API used by Core Audio -- it guarantees CPU time
+/// even under system load without causing priority inversion with WindowServer.
+///
+/// Parameters are tuned for a 2ms input processing loop:
+/// - period: 2ms (how often we need CPU)
+/// - computation: 500us (how much CPU per period)
+/// - constraint: 1ms (deadline within period)
+/// - preemptible: true
+///
+/// On non-macOS platforms this is a no-op.
+pub fn set_realtime_priority() {
+    #[cfg(target_os = "macos")]
+    mach_rt::set_realtime_priority_impl();
+}
+
 /// Starts the SDL2-backed runtime thread that drives device discovery and events.
 pub(crate) fn start_runtime_thread(
     inner: Arc<Inner>,
@@ -20,6 +123,8 @@ pub(crate) fn start_runtime_thread(
     ready_tx: Option<std::sync::mpsc::Sender<()>>,
 ) {
     thread::spawn(move || {
+        set_realtime_priority();
+
         // SDL must live entirely within this thread
         let sdl_ctx = match sdl2::init() {
             Ok(ctx) => ctx,
