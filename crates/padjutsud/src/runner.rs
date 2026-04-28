@@ -1,7 +1,7 @@
 use std::{process::Command, time::Duration};
 
 use colored::Colorize;
-use padjutsu_control::Performer;
+use padjutsu_control::{PerformerCmd, PerformerWorker};
 use padjutsu_gamepad::ControllerManager;
 
 use padjutsu_workspace::{MouseButton, MouseClickType};
@@ -11,51 +11,47 @@ use crate::{app::Effect, print_error, print_info};
 const DEFAULT_SHELL: &str = "/bin/zsh";
 
 pub struct ActionRunner<'a> {
-    keypress: &'a mut Performer,
+    worker: &'a PerformerWorker,
     manager: &'a ControllerManager,
     shell: Option<Box<str>>,
 }
 
 impl<'a> ActionRunner<'a> {
-    pub fn new(keypress: &'a mut Performer, manager: &'a ControllerManager) -> Self {
+    pub fn new(worker: &'a PerformerWorker, manager: &'a ControllerManager) -> Self {
         Self {
-            keypress,
+            worker,
             manager,
             shell: None,
         }
     }
 
+    fn send(&self, cmd: PerformerCmd) {
+        // Non-blocking: if the worker queue is full (worker stuck on a slow
+        // CGEventPost), drop the command. For movement/scroll the next tick
+        // produces a fresh state; for keys this is rare and acceptable.
+        if let Err(e) = self.worker.try_send(cmd) {
+            print_error!("performer queue full, dropping command: {e:?}");
+        }
+    }
+
     pub fn run_effect(&mut self, effect: Effect) {
         match effect {
-            Effect::KeyTap(ref k) => {
+            Effect::KeyTap(k) => {
                 print_info!("ACTION: KeyTap combo={k:?}");
-                match self.keypress.perform(k) {
-                    Ok(()) => print_info!("  KeyTap OK"),
-                    Err(e) => print_error!("  KeyTap FAILED: {e:?}"),
-                }
+                self.send(PerformerCmd::KeyTap(k));
             }
-            Effect::KeyPress(ref k) => {
+            Effect::KeyPress(k) => {
                 print_info!("ACTION: KeyPress combo={k:?}");
-                match self.keypress.press(k) {
-                    Ok(()) => print_info!("  KeyPress OK"),
-                    Err(e) => print_error!("  KeyPress FAILED: {e:?}"),
-                }
+                self.send(PerformerCmd::KeyPress(k));
             }
-            Effect::KeyRelease(ref k) => {
+            Effect::KeyRelease(k) => {
                 print_info!("ACTION: KeyRelease combo={k:?}");
-                match self.keypress.release(k) {
-                    Ok(()) => print_info!("  KeyRelease OK"),
-                    Err(e) => print_error!("  KeyRelease FAILED: {e:?}"),
-                }
+                self.send(PerformerCmd::KeyRelease(k));
             }
-            Effect::Macros(ref m) => {
+            Effect::Macros(m) => {
                 print_info!("ACTION: Macros ({} combos)", m.len());
-                for (i, k) in m.iter().enumerate() {
-                    print_info!("  Macros[{i}] combo={k:?}");
-                    match self.keypress.perform(k) {
-                        Ok(()) => print_info!("  Macros[{i}] OK"),
-                        Err(e) => print_error!("  Macros[{i}] FAILED: {e:?}"),
-                    }
+                for k in m.iter() {
+                    self.send(PerformerCmd::KeyTap(k.clone()));
                 }
             }
             Effect::Shell(ref s) => {
@@ -71,16 +67,13 @@ impl<'a> ActionRunner<'a> {
                     MouseButton::Right => enigo::Button::Right,
                     MouseButton::Middle => enigo::Button::Middle,
                 };
-                let result = match click_type {
-                    MouseClickType::Click => self.keypress.mouse_click(enigo_button),
+                let cmd = match click_type {
+                    MouseClickType::Click => PerformerCmd::MouseClick(enigo_button),
                     MouseClickType::DoubleClick => {
-                        self.keypress.mouse_double_click(enigo_button)
+                        PerformerCmd::MouseDoubleClick(enigo_button)
                     }
                 };
-                match result {
-                    Ok(()) => print_info!("  MouseClick OK"),
-                    Err(e) => print_error!("  MouseClick FAILED: {e:?}"),
-                }
+                self.send(cmd);
             }
             Effect::MousePress { button } => {
                 print_info!("ACTION: MousePress button={button:?}");
@@ -89,10 +82,7 @@ impl<'a> ActionRunner<'a> {
                     MouseButton::Right => enigo::Button::Right,
                     MouseButton::Middle => enigo::Button::Middle,
                 };
-                match self.keypress.mouse_press(enigo_button) {
-                    Ok(()) => print_info!("  MousePress OK"),
-                    Err(e) => print_error!("  MousePress FAILED: {e:?}"),
-                }
+                self.send(PerformerCmd::MousePress(enigo_button));
             }
             Effect::MouseRelease { button } => {
                 print_info!("ACTION: MouseRelease button={button:?}");
@@ -101,37 +91,18 @@ impl<'a> ActionRunner<'a> {
                     MouseButton::Right => enigo::Button::Right,
                     MouseButton::Middle => enigo::Button::Middle,
                 };
-                match self.keypress.mouse_release(enigo_button) {
-                    Ok(()) => print_info!("  MouseRelease OK"),
-                    Err(e) => print_error!("  MouseRelease FAILED: {e:?}"),
-                }
+                self.send(PerformerCmd::MouseRelease(enigo_button));
             }
             Effect::MouseMove { dx, dy } => {
-                let _ = self.keypress.mouse_move(dx, dy);
+                self.send(PerformerCmd::MouseMove { dx, dy });
             }
             Effect::Scroll { h, v } => {
-                let started_at = std::time::Instant::now();
-                print_info!("ACTION: Scroll h={h:.3} v={v:.3}");
                 if h != 0.0 {
-                    match self.keypress.scroll_x(h) {
-                        Ok(()) => print_info!("  ScrollX OK value={h:.3}"),
-                        Err(e) => {
-                            print_error!("  ScrollX FAILED value={h:.3}: {e:?}")
-                        }
-                    }
+                    self.send(PerformerCmd::ScrollX(h));
                 }
                 if v != 0.0 {
-                    match self.keypress.scroll_y(v) {
-                        Ok(()) => print_info!("  ScrollY OK value={v:.3}"),
-                        Err(e) => {
-                            print_error!("  ScrollY FAILED value={v:.3}: {e:?}")
-                        }
-                    }
+                    self.send(PerformerCmd::ScrollY(v));
                 }
-                print_info!(
-                    "  Scroll elapsed_us={} ",
-                    started_at.elapsed().as_micros()
-                );
             }
             Effect::Rumble { id, ms } => {
                 print_info!("ACTION: Rumble id={id} ms={ms}");
@@ -145,10 +116,7 @@ impl<'a> ActionRunner<'a> {
                 print_info!(
                     "ACTION: RawModifierPress key={key:?} keycode=0x{keycode:02x}"
                 );
-                match self.keypress.raw_modifier_press(keycode) {
-                    Ok(()) => print_info!("  RawModifierPress OK"),
-                    Err(e) => print_error!("  RawModifierPress FAILED: {e}"),
-                }
+                self.send(PerformerCmd::RawModifierPress(keycode));
             }
             #[cfg(target_os = "macos")]
             Effect::RawModifierRelease(key) => {
@@ -156,10 +124,7 @@ impl<'a> ActionRunner<'a> {
                 print_info!(
                     "ACTION: RawModifierRelease key={key:?} keycode=0x{keycode:02x}"
                 );
-                match self.keypress.raw_modifier_release(keycode) {
-                    Ok(()) => print_info!("  RawModifierRelease OK"),
-                    Err(e) => print_error!("  RawModifierRelease FAILED: {e}"),
-                }
+                self.send(PerformerCmd::RawModifierRelease(keycode));
             }
             #[cfg(not(target_os = "macos"))]
             Effect::RawModifierPress(_) | Effect::RawModifierRelease(_) => {

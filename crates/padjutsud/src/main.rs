@@ -18,7 +18,7 @@ use crossbeam_channel::{select, unbounded};
 use lunchctl::{LaunchAgent, LaunchControllable};
 use crate::activity::{Monitor, NotificationListener};
 
-use padjutsu_control::Performer;
+use padjutsu_control::{Performer, PerformerWorker};
 use padjutsu_gamepad::{ControllerEvent, ControllerManager, set_realtime_priority};
 use padjutsu_workspace::Workspace;
 
@@ -32,7 +32,7 @@ use crate::domain::{
 };
 use crate::runner::ActionRunner;
 
-const APP_LABEL: &str = "co.myrt.padjutsu";
+const APP_LABEL: &str = "me.gulya.padjutsu";
 
 fn main() -> process::ExitCode {
     let cli = Cli::parse();
@@ -370,7 +370,8 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
             let manager = ControllerManager::new()
                 .expect("failed to start controller manager");
             let rx = manager.subscribe();
-            let mut keypress = Performer::new().expect("failed to start keypress");
+            let keypress = Performer::new().expect("failed to start keypress");
+            let worker = PerformerWorker::spawn(keypress);
             // Single coalesced wake timer: earliest of movement tick and repeat deadlines.
             let mut wake_rx = crossbeam_channel::never::<std::time::Instant>();
             let idle_period = Duration::from_millis(16);
@@ -397,7 +398,7 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                 None => (None, None),
             };
 
-            let mut action_runner = ActionRunner::new(&mut keypress, &manager);
+            let mut action_runner = ActionRunner::new(&worker, &manager);
             runtime_state.set_mode(if padjutsu.workspace.is_some() {
                 RuntimeMode::Active
             } else {
