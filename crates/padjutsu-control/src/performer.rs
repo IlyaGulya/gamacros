@@ -5,10 +5,62 @@ use enigo::{
 
 use crate::KeyCombo;
 
+/// Wrap a CG/Cocoa-using closure in a macOS autorelease pool so any
+/// internally-allocated CFData/NSObject autoreleased values are freed
+/// at the end of the call. Without a pool, those values accumulate in
+/// the absence of a Cocoa main run loop and look like a memory leak.
+#[cfg(target_os = "macos")]
+#[inline]
+fn with_pool<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    objc2::rc::autoreleasepool(|_| f())
+}
+
+#[cfg(not(target_os = "macos"))]
+#[inline]
+fn with_pool<F, R>(f: F) -> R
+where
+    F: FnOnce() -> R,
+{
+    f()
+}
+
+#[cfg(target_os = "macos")]
+mod cg_source {
+    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
+    use std::cell::RefCell;
+
+    thread_local! {
+        static SOURCE: RefCell<Option<CGEventSource>> = const { RefCell::new(None) };
+    }
+
+    /// Run a closure with a cached, thread-local CGEventSource.
+    /// The source is created once per thread and reused for all events,
+    /// avoiding the per-event CFData allocations that would otherwise leak
+    /// or churn through the system allocator.
+    pub fn with<F, R>(f: F) -> Result<R, &'static str>
+    where
+        F: FnOnce(&CGEventSource) -> R,
+    {
+        SOURCE.with(|cell| {
+            let mut slot = cell.borrow_mut();
+            if slot.is_none() {
+                let src = CGEventSource::new(
+                    CGEventSourceStateID::CombinedSessionState,
+                )
+                .map_err(|_| "failed to create CGEventSource")?;
+                *slot = Some(src);
+            }
+            Ok(f(slot.as_ref().expect("CGEventSource initialized above")))
+        })
+    }
+}
+
 #[cfg(target_os = "macos")]
 mod raw_modifier {
     use core_graphics::event::{CGEvent, CGEventFlags, CGEventTapLocation, CGEventType};
-    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
     /// Device-specific flag bits (from IOKit NX headers).
     const NX_DEVICELCTLKEYMASK: u64 = 0x0000_0001;
@@ -66,17 +118,12 @@ mod raw_modifier {
         let (high_flag, dev_flag) = modifier_flags(keycode)
             .ok_or_else(|| format!("keycode 0x{keycode:02x} is not a modifier"))?;
 
-        // Use CombinedSessionState so the event updates the global modifier state.
-        // Apps like Freeflow may poll CGEventSourceFlagsState(CombinedSessionState)
-        // rather than monitoring individual events.
-        let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
-            .map_err(|_| "failed to create CGEventSource")?;
-
-        // Create a FlagsChanged event.  The core_graphics crate exposes
-        // `CGEvent::new_keyboard_event` which creates KeyDown/KeyUp.
-        // For FlagsChanged we create a keyboard event and then override its type.
-        let event = CGEvent::new_keyboard_event(source, keycode, pressed)
-            .map_err(|_| "failed to create CGEvent")?;
+        // Use cached thread-local CGEventSource so we don't allocate a new
+        // one per event (CFData leak / churn).
+        let event = super::cg_source::with(|source| {
+            CGEvent::new_keyboard_event(source.clone(), keycode, pressed)
+        })?
+        .map_err(|_| "failed to create CGEvent")?;
 
         // Override event type to FlagsChanged (type 12).
         event.set_type(CGEventType::FlagsChanged);
@@ -107,7 +154,6 @@ mod smooth_scroll {
     use core_graphics::event::{
         CGEvent, CGEventTapLocation, EventField, ScrollEventUnit,
     };
-    use core_graphics::event_source::{CGEventSource, CGEventSourceStateID};
 
     use enigo::{Axis, InputError, InputResult};
     use log::info;
@@ -115,13 +161,20 @@ mod smooth_scroll {
 
     pub fn post(axis: Axis, value: f64) -> InputResult<()> {
         let started_at = Instant::now();
-        let source = CGEventSource::new(CGEventSourceStateID::CombinedSessionState)
-            .map_err(|_| InputError::Simulate("failed to create scroll source"))?;
-        let Ok(event) =
-            CGEvent::new_scroll_event(source, ScrollEventUnit::PIXEL, 2, 0, 0, 0)
-        else {
-            return Err(InputError::Simulate("failed creating smooth scroll event"));
-        };
+        // Use cached thread-local CGEventSource (see `cg_source` module above)
+        // to avoid allocating a fresh source per event.
+        let event = super::cg_source::with(|source| {
+            CGEvent::new_scroll_event(
+                source.clone(),
+                ScrollEventUnit::PIXEL,
+                2,
+                0,
+                0,
+                0,
+            )
+        })
+        .map_err(|_| InputError::Simulate("failed to create scroll source"))?
+        .map_err(|_| InputError::Simulate("failed creating smooth scroll event"))?;
 
         let fixed_value = (value * 65536.0).round() as i64;
         let point_value = value.round() as i64;
@@ -201,36 +254,36 @@ impl Performer {
     /// Perform key combo.
     /// This will press and release the keys in the key combo.
     pub fn perform(&mut self, key_combo: &KeyCombo) -> InputResult<()> {
-        key_combo.perform(&mut self.enigo)
+        with_pool(|| key_combo.perform(&mut self.enigo))
     }
 
     /// Press keys.
     pub fn press(&mut self, key_combo: &KeyCombo) -> InputResult<()> {
-        key_combo.press(&mut self.enigo)
+        with_pool(|| key_combo.press(&mut self.enigo))
     }
 
     /// Release keys.
     pub fn release(&mut self, key_combo: &KeyCombo) -> InputResult<()> {
-        key_combo.release(&mut self.enigo)
+        with_pool(|| key_combo.release(&mut self.enigo))
     }
 
     /// Move mouse.
     pub fn mouse_move(&mut self, x: i32, y: i32) -> InputResult<()> {
-        self.enigo.move_mouse(x, y, Coordinate::Rel)
+        with_pool(|| self.enigo.move_mouse(x, y, Coordinate::Rel))
     }
 
     /// Scroll horizontally.
     /// Uses macOS specific smooth scrolling.
     #[cfg(target_os = "macos")]
     pub fn scroll_x(&mut self, value: f64) -> InputResult<()> {
-        smooth_scroll::post(Axis::Horizontal, value)
+        with_pool(|| smooth_scroll::post(Axis::Horizontal, value))
     }
 
     /// Scroll vertically.
     /// Uses macOS specific smooth scrolling.
     #[cfg(target_os = "macos")]
     pub fn scroll_y(&mut self, value: f64) -> InputResult<()> {
-        smooth_scroll::post(Axis::Vertical, value)
+        with_pool(|| smooth_scroll::post(Axis::Vertical, value))
     }
 
     /// Fallback for non-macOS systems
@@ -246,23 +299,25 @@ impl Performer {
 
     /// Click a mouse button.
     pub fn mouse_click(&mut self, button: Button) -> InputResult<()> {
-        self.enigo.button(button, Direction::Click)
+        with_pool(|| self.enigo.button(button, Direction::Click))
     }
 
     /// Double-click a mouse button.
     pub fn mouse_double_click(&mut self, button: Button) -> InputResult<()> {
-        self.enigo.button(button, Direction::Click)?;
-        self.enigo.button(button, Direction::Click)
+        with_pool(|| {
+            self.enigo.button(button, Direction::Click)?;
+            self.enigo.button(button, Direction::Click)
+        })
     }
 
     /// Press a mouse button (hold down).
     pub fn mouse_press(&mut self, button: Button) -> InputResult<()> {
-        self.enigo.button(button, Direction::Press)
+        with_pool(|| self.enigo.button(button, Direction::Press))
     }
 
     /// Release a mouse button.
     pub fn mouse_release(&mut self, button: Button) -> InputResult<()> {
-        self.enigo.button(button, Direction::Release)
+        with_pool(|| self.enigo.button(button, Direction::Release))
     }
 
     /// Send a raw modifier key press via FlagsChanged CGEvent (macOS only).
@@ -270,12 +325,12 @@ impl Performer {
     /// and SuperWhisper that listen for modifier-only keypresses need this.
     #[cfg(target_os = "macos")]
     pub fn raw_modifier_press(&mut self, keycode: u16) -> Result<(), String> {
-        raw_modifier::post_flags_changed(keycode, true)
+        with_pool(|| raw_modifier::post_flags_changed(keycode, true))
     }
 
     /// Send a raw modifier key release via FlagsChanged CGEvent (macOS only).
     #[cfg(target_os = "macos")]
     pub fn raw_modifier_release(&mut self, keycode: u16) -> Result<(), String> {
-        raw_modifier::post_flags_changed(keycode, false)
+        with_pool(|| raw_modifier::post_flags_changed(keycode, false))
     }
 }

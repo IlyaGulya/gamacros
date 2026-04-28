@@ -550,7 +550,12 @@ fn map_sdl_axis(axis: SdlAxis) -> Option<Axis> {
 }
 
 fn broadcast(inner: &Inner, event: ControllerEvent) {
+    use crossbeam_channel::TrySendError;
     if let Ok(mut subs) = inner.subscribers.lock() {
-        subs.retain(|tx| tx.send(event.clone()).is_ok());
+        subs.retain(|tx| match tx.try_send(event.clone()) {
+            Ok(()) => true,
+            Err(TrySendError::Full(_)) => true, // keep subscriber, drop event
+            Err(TrySendError::Disconnected(_)) => false, // remove subscriber
+        });
     }
 }

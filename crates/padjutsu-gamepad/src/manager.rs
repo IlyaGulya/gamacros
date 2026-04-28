@@ -2,7 +2,7 @@ use std::sync::{Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use ahash::AHashMap;
-use crossbeam_channel::{unbounded, Sender};
+use crossbeam_channel::{bounded, unbounded, Sender};
 
 use crate::command::Command;
 use crate::Result;
@@ -45,8 +45,13 @@ impl ControllerManager {
     }
 
     /// Subscribes to controller events. Dropped subscribers are cleaned automatically.
+    ///
+    /// Channel is bounded to 4096 events. If the consumer falls behind, the
+    /// broadcaster will drop new events rather than buffer unbounded memory.
+    /// This is intentional: for real-time input, dropping the latest is
+    /// preferable to growing the queue indefinitely.
     pub fn subscribe(&self) -> EventReceiver {
-        let (tx, rx) = unbounded();
+        let (tx, rx) = bounded(4096);
         if let Ok(mut subs) = self.inner.subscribers.lock() {
             subs.push(tx);
         }

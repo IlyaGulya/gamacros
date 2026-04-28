@@ -447,6 +447,21 @@ fn run_event_loop(maybe_workspace_path: Option<PathBuf>) {
                             ) {
                                 break;
                             }
+                            // Drain any additional events that have accumulated
+                            // in the channel to prevent unbounded growth when
+                            // the producer (SDL2 thread) outpaces the consumer.
+                            while let Ok(event) = rx.try_recv() {
+                                if let DomainControl::Break = dispatch_and_process_overdue(
+                                    DomainEvent::Controller(event),
+                                    &mut padjutsu,
+                                    &mut runtime_state,
+                                    &mut action_runner,
+                                    &manager,
+                                    &mut wake_state,
+                                ) {
+                                    break;
+                                }
+                            }
                         }
                         Err(err) => {
                             print_error!("event channel closed: {err}");
