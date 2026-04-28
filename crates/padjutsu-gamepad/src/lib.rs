@@ -2,6 +2,7 @@ mod command;
 mod events;
 mod handle;
 mod manager;
+mod metrics;
 mod runtime;
 mod types;
 

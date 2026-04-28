@@ -1124,6 +1124,7 @@ name = "padjutsu-control"
 version = "0.0.0"
 dependencies = [
  "core-graphics",
+ "crossbeam-channel",
  "enigo",
  "log",
  "objc2",
@@ -1137,6 +1138,7 @@ version = "0.0.0"
 dependencies = [
  "ahash",
  "crossbeam-channel",
+ "ctrlc",
  "padjutsu-bit-derive",
  "padjutsu-bit-mask",
  "sdl2",

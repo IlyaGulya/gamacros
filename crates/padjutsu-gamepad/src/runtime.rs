@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::thread;
+use std::time::Instant;
 
 use crossbeam_channel::Receiver;
 use ahash::{AHashMap, AHashSet};
@@ -11,6 +12,7 @@ use sdl2::joystick::Joystick;
 use crate::command::Command;
 use crate::events::ControllerEvent;
 use crate::manager::Inner;
+use crate::metrics::Metrics;
 use crate::types::{Button, ControllerId, ControllerInfo, Axis};
 
 // --- Mach real-time thread priority via raw FFI ---
@@ -124,6 +126,7 @@ pub(crate) fn start_runtime_thread(
 ) {
     thread::spawn(move || {
         set_realtime_priority();
+        crate::metrics::init();
 
         // SDL must live entirely within this thread
         let sdl_ctx = match sdl2::init() {
@@ -513,6 +516,8 @@ pub(crate) fn start_runtime_thread(
                     }
                 }
             }
+
+            metrics_tick();
         }
     });
 }
@@ -549,13 +554,46 @@ fn map_sdl_axis(axis: SdlAxis) -> Option<Axis> {
     })
 }
 
+thread_local! {
+    static METRICS: std::cell::RefCell<Metrics> = std::cell::RefCell::new(Metrics::default());
+}
+
 fn broadcast(inner: &Inner, event: ControllerEvent) {
     use crossbeam_channel::TrySendError;
+    if crate::metrics::is_enabled() {
+        METRICS.with(|m| {
+            let mut m = m.borrow_mut();
+            match &event {
+                ControllerEvent::AxisMotion { axis, .. } => {
+                    m.record_axis(*axis, Instant::now())
+                }
+                ControllerEvent::ButtonPressed { .. }
+                | ControllerEvent::ButtonReleased { .. } => m.record_button(),
+                _ => {}
+            }
+        });
+    }
+    let t0 = if crate::metrics::is_enabled() {
+        Some(Instant::now())
+    } else {
+        None
+    };
     if let Ok(mut subs) = inner.subscribers.lock() {
         subs.retain(|tx| match tx.try_send(event.clone()) {
             Ok(()) => true,
             Err(TrySendError::Full(_)) => true, // keep subscriber, drop event
             Err(TrySendError::Disconnected(_)) => false, // remove subscriber
         });
+    }
+    if let Some(t0) = t0 {
+        let cost = Instant::now().saturating_duration_since(t0);
+        METRICS.with(|m| m.borrow_mut().record_broadcast_cost(cost));
+    }
+}
+
+/// Periodic metrics flush — called from the SDL event loop on every iteration.
+fn metrics_tick() {
+    if crate::metrics::is_enabled() {
+        METRICS.with(|m| m.borrow_mut().maybe_report());
     }
 }
